@@ -1,18 +1,38 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageUsers } from "@/lib/permissions";
-import type { Role } from "@/lib/enums";
+import { canManageUsers, checkUserGrant, isSuperAdmin, type SessionUser } from "@/lib/permissions";
+import { userSelect } from "@/lib/selects";
+import { Role } from "@/lib/enums";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   password: z.string().min(6).optional(),
-  roles: z.array(z.string()).optional(),
+  roles: z.array(z.nativeEnum(Role)).optional(),
   campusIds: z.array(z.string()).optional(),
   isActive: z.boolean().optional(),
 });
+
+/**
+ * 超管账号只能由超管这一层动：改密码、改角色、停用都算。
+ * 返回 null 表示放行，否则返回要回给客户端的拒绝响应。
+ */
+async function guardTarget(
+  sessionUser: SessionUser,
+  id: string,
+): Promise<{ error: string; status: 403 | 404 } | null> {
+  const target = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true, roles: true },
+  });
+  if (!target) return { error: "Not found", status: 404 };
+  if (!isSuperAdmin(sessionUser) && target.roles.some((r) => r.role === Role.SUPER_ADMIN)) {
+    return { error: "不能修改超级管理员账号", status: 403 };
+  }
+  return null;
+}
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -21,11 +41,17 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!canManageUsers(sessionUser)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
+  const targetDenied = await guardTarget(sessionUser, id);
+  if (targetDenied) return NextResponse.json({ error: targetDenied.error }, { status: targetDenied.status });
+
   const body = await req.json();
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const { name, password, roles, campusIds, isActive } = parsed.data;
+
+  const grantDenied = checkUserGrant(sessionUser, { roles, campusIds });
+  if (grantDenied) return NextResponse.json({ error: grantDenied }, { status: 403 });
 
   const updates: { name?: string; passwordHash?: string; isActive?: boolean } = {};
   if (name) updates.name = name;
@@ -36,7 +62,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     await tx.user.update({ where: { id }, data: updates });
     if (roles) {
       await tx.userRole.deleteMany({ where: { userId: id } });
-      await tx.userRole.createMany({ data: roles.map((r) => ({ userId: id, role: r as Role })) });
+      await tx.userRole.createMany({ data: roles.map((r) => ({ userId: id, role: r })) });
     }
     if (campusIds) {
       await tx.userCampus.deleteMany({ where: { userId: id } });
@@ -44,10 +70,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     }
   });
 
-  const updated = await prisma.user.findUnique({
-    where: { id },
-    include: { roles: true, campuses: { include: { campus: true } } },
-  });
+  const updated = await prisma.user.findUnique({ where: { id }, select: userSelect });
   return NextResponse.json(updated);
 }
 
@@ -58,6 +81,12 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!canManageUsers(sessionUser)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
+  if (id === sessionUser.id) {
+    return NextResponse.json({ error: "不能停用自己的账号" }, { status: 400 });
+  }
+  const targetDenied = await guardTarget(sessionUser, id);
+  if (targetDenied) return NextResponse.json({ error: targetDenied.error }, { status: targetDenied.status });
+
   await prisma.user.update({ where: { id }, data: { isActive: false } });
   return NextResponse.json({ ok: true });
 }

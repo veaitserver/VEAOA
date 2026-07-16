@@ -8,6 +8,10 @@ import { z } from "zod";
 const schema = z.object({ name: z.string().min(1, "年级名称不能为空") });
 
 export async function GET() {
+  // 年级是全局基础数据，任何登录用户（建档、开课包）都要读，故只校验登录。
+  const session = await auth();
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const grades = await prisma.grade.findMany({ orderBy: { name: "asc" } });
   return NextResponse.json(grades);
 }

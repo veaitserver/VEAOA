@@ -8,6 +8,10 @@ import { z } from "zod";
 const schema = z.object({ name: z.string().min(1, "科目名称不能为空") });
 
 export async function GET() {
+  // 科目是全局基础数据，任何登录用户（开课包、写日志）都要读，故只校验登录。
+  const session = await auth();
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const subjects = await prisma.subject.findMany({ orderBy: { name: "asc" } });
   return NextResponse.json(subjects);
 }

@@ -39,6 +39,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
+    // proxy.ts 的 matcher 全靠这个回调兜底：next-auth 在没有 authorized 时
+    // 一律放行，只刷新会话 cookie，matcher 形同虚设。
+    authorized({ auth }) {
+      return !!auth?.user;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
