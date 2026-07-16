@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { campusScope, canManageStudents, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -23,13 +23,11 @@ export async function GET(req: Request) {
   const search = searchParams.get("search") ?? "";
   const status = searchParams.get("status"); // "lead" | "enrolled" | null
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
-  const allowedCampusIds = isSuperAdmin ? undefined : sessionUser.campusIds;
+  const sessionUser = session.user as SessionUser;
 
   const where: Record<string, unknown> = {};
-  if (allowedCampusIds) where.campusId = { in: allowedCampusIds };
-  if (campusId) where.campusId = campusId;
+  const scope = campusScope(sessionUser, campusId);
+  if (scope) where.campusId = scope;
   if (search) where.OR = [
     { name: { contains: search } },
     { phone: { contains: search } },
@@ -66,11 +64,20 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const sessionUser = session.user as SessionUser;
+  if (!canManageStudents(sessionUser)) {
+    return NextResponse.json({ error: "无权建立学生档案" }, { status: 403 });
+  }
+
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const { name, phone, gradeId, publicSchool, salesId, campusId, leadSource } = parsed.data;
+
+  // campusId 来自请求体，不校验就能往任何校区塞学生。
+  const denied = denyCrossCampus(sessionUser, campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const existing = await prisma.student.findUnique({ where: { phone } });
   if (existing) return NextResponse.json({ error: "该手机号已存在" }, { status: 409 });

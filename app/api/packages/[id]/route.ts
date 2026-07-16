@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canEditActivePackage } from "@/lib/permissions";
-import type { Role } from "@/lib/enums";
+import {
+  canEditActivePackage,
+  canEditPendingPackage,
+  denyCrossCampus,
+  type SessionUser,
+} from "@/lib/permissions";
 import { z } from "zod";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -29,6 +33,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
 
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const denied = denyCrossCampus(session.user as SessionUser, pkg.student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
   return NextResponse.json(pkg);
 }
 
@@ -36,13 +44,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[]; name: string };
+  const sessionUser = session.user as SessionUser;
   const { id } = await params;
 
-  const pkg = await prisma.coursePackage.findUnique({ where: { id } });
+  const pkg = await prisma.coursePackage.findUnique({
+    where: { id },
+    include: { student: { select: { campusId: true } } },
+  });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Active packages require FINANCE or SUPER_ADMIN
+  const denied = denyCrossCampus(sessionUser, pkg.student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 待审批课包原先直接短路掉整个角色检查，任何登录用户都能改价删单。
+  if (!canEditPendingPackage(sessionUser)) {
+    return NextResponse.json({ error: "无权修改课包" }, { status: 403 });
+  }
+  // 已激活的课包只有财务能动。
   if (pkg.status !== "PENDING_APPROVAL" && !canEditActivePackage(sessionUser)) {
     return NextResponse.json({ error: "已激活课包仅限财务修改" }, { status: 403 });
   }
@@ -74,12 +92,21 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[]; name: string };
+  const sessionUser = session.user as SessionUser;
   const { id } = await params;
 
-  const pkg = await prisma.coursePackage.findUnique({ where: { id } });
+  const pkg = await prisma.coursePackage.findUnique({
+    where: { id },
+    include: { student: { select: { campusId: true } } },
+  });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  const denied = denyCrossCampus(sessionUser, pkg.student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  if (!canEditPendingPackage(sessionUser)) {
+    return NextResponse.json({ error: "无权删除课包" }, { status: 403 });
+  }
   if (pkg.status !== "PENDING_APPROVAL" && !canEditActivePackage(sessionUser)) {
     return NextResponse.json({ error: "已激活课包仅限财务删除" }, { status: 403 });
   }

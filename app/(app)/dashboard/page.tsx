@@ -1,22 +1,24 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import type { Role } from "@/lib/enums";
+import { campusScope, type SessionUser } from "@/lib/permissions";
 import Link from "next/link";
 
 export default async function DashboardPage() {
   const session = await auth();
-  const userRoles = (session?.user as { roles: Role[] })?.roles ?? [];
-  const campusIds = (session?.user as { campusIds: string[] })?.campusIds ?? [];
-  const isSuperAdmin = userRoles.includes("SUPER_ADMIN" as Role);
+  const sessionUser = session?.user as SessionUser | undefined;
+  const userRoles = sessionUser?.roles ?? [];
 
-  const campusFilter = isSuperAdmin ? {} : { campusId: { in: campusIds } };
+  // 只有 Student 有 campusId；课包/课程/日志都要顺着关系链过滤到学生身上。
+  const scope = sessionUser ? campusScope(sessionUser) : { in: [] };
+  const onStudent = scope ? { campusId: scope } : {};
+  const viaStudent = scope ? { student: { campusId: scope } } : {};
 
   const [totalStudents, activePackages, todayLessons, pendingLogs] = await Promise.all([
-    prisma.student.count({ where: campusFilter }),
-    prisma.coursePackage.count({ where: { ...campusFilter, status: "ACTIVE" } }),
+    prisma.student.count({ where: onStudent }),
+    prisma.coursePackage.count({ where: { ...viaStudent, status: "ACTIVE" } }),
     prisma.scheduledLesson.count({
       where: {
-        ...(isSuperAdmin ? {} : { student: campusFilter }),
+        ...viaStudent,
         startTime: {
           gte: new Date(new Date().setHours(0, 0, 0, 0)),
           lt: new Date(new Date().setHours(23, 59, 59, 999)),
@@ -24,12 +26,15 @@ export default async function DashboardPage() {
       },
     }),
     prisma.lessonLog.count({
-      where: { confirmedAt: null },
+      where: {
+        confirmedAt: null,
+        ...(scope ? { lesson: { student: { campusId: scope } } } : {}),
+      },
     }),
   ]);
 
   const recentStudents = await prisma.student.findMany({
-    where: campusFilter,
+    where: onStudent,
     include: { grade: true, campus: true },
     orderBy: { createdAt: "desc" },
     take: 5,

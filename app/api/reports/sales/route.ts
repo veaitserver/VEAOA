@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { campusScope, type SessionUser } from "@/lib/permissions";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -13,16 +13,13 @@ export async function GET(req: Request) {
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
+  const sessionUser = session.user as SessionUser;
 
   const where: Record<string, unknown> = { status: "ACTIVE" };
 
-  if (!isSuperAdmin) {
-    where.student = { campusId: { in: sessionUser.campusIds } };
-  }
+  const scope = campusScope(sessionUser, campusId);
+  if (scope) where.student = { campusId: scope };
   if (salesId) where.createdById = salesId;
-  if (campusId) where.student = { campusId };
   if (startDate || endDate) {
     const dateFilter: Record<string, Date> = {};
     if (startDate) dateFilter.gte = new Date(startDate);

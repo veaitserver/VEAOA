@@ -1,24 +1,33 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { canConfirmLog, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sessionUser = session.user as { id: string; roles: Role[] };
-  if (!sessionUser.roles.some(r => ["ACADEMIC_ADMIN", "PRINCIPAL", "SUPER_ADMIN"].includes(r as string))) {
+  const sessionUser = session.user as SessionUser;
+  if (!canConfirmLog(sessionUser)) {
     return NextResponse.json({ error: "仅教务/校长可确认核销" }, { status: 403 });
   }
 
   const { id } = await params;
   const lesson = await prisma.scheduledLesson.findUnique({
     where: { id },
-    include: { log: { include: { deduction: true } }, package: true },
+    include: {
+      log: { include: { deduction: true } },
+      package: true,
+      student: { select: { campusId: true } },
+    },
   });
 
   if (!lesson) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // 核销会真金白银地扣课时，跨校区绝不能放行。
+  const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
   if (!lesson.log) return NextResponse.json({ error: "老师尚未提交日志" }, { status: 400 });
   if (lesson.log.deduction) return NextResponse.json({ error: "该课程已核销" }, { status: 400 });
 

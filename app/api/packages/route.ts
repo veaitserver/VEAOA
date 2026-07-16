@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canCreatePackage } from "@/lib/permissions";
-import type { Role } from "@/lib/enums";
+import { campusScope, canCreatePackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -23,15 +22,13 @@ export async function GET(req: Request) {
   const status = searchParams.get("status");
   const studentId = searchParams.get("studentId");
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
+  const sessionUser = session.user as SessionUser;
 
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
   if (studentId) where.studentId = studentId;
-  if (!isSuperAdmin) {
-    where.student = { campusId: { in: sessionUser.campusIds } };
-  }
+  const scope = campusScope(sessionUser);
+  if (scope) where.student = { campusId: scope };
 
   const packages = await prisma.coursePackage.findMany({
     where,
@@ -53,7 +50,7 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[]; name: string };
+  const sessionUser = session.user as SessionUser;
   if (!canCreatePackage(sessionUser)) {
     return NextResponse.json({ error: "无权创建课包" }, { status: 403 });
   }
@@ -63,6 +60,16 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const { studentId, gradeId, subjectId, totalHours, pricePerHour, totalAmount, notes } = parsed.data;
+
+  // studentId 直接来自请求体：不校验就能给别校区的学生开单，
+  // 且 createdById 记的是自己 —— 销售报表会把提成算到攻击者头上。
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { campusId: true },
+  });
+  if (!student) return NextResponse.json({ error: "学生不存在" }, { status: 404 });
+  const denied = denyCrossCampus(sessionUser, student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const pkg = await prisma.coursePackage.create({
     data: {
