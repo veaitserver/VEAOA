@@ -27,6 +27,7 @@ model User {
   logConfirmations   LessonLog[]       @relation("LogConfirmer")
   deductionReversals CourseDeduction[]
   notifications      Notification[]
+  campaignsOwned     Campaign[]        @relation("CampaignOwner")
 }
 
 model UserRole {
@@ -54,6 +55,7 @@ model Campus {
   users      UserCampus[]
   students   Student[]
   classrooms Classroom[]
+  campaigns  Campaign[]
 }
 
 model Grade {
@@ -76,13 +78,19 @@ model Student {
   id           String   @id @default(cuid())
   name         String
   phone        String   @unique
-  gradeId      String
+  // 线索导入时年级可能未知，故可空。建档 UI 仍要求填写。
+  gradeId      String?
   publicSchool String?
   salesId      String?
   campusId     String
+  // 加拿大用邮编（前三位 FSA）划分营销区域。
+  postalCode   String?
+  // 家长偏好联系 App 与其账号，contactAppId 参与去重。
+  preferredContactApp String?
+  contactAppId        String?
   createdAt    DateTime @default(now())
 
-  grade    Grade   @relation(fields: [gradeId], references: [id])
+  grade    Grade?  @relation(fields: [gradeId], references: [id])
   sales    User?   @relation("StudentSales", fields: [salesId], references: [id])
   campus   Campus  @relation(fields: [campusId], references: [id])
 
@@ -90,12 +98,55 @@ model Student {
   followUps FollowUp[]
   packages  CoursePackage[]
   lessons   ScheduledLesson[]
+
+  @@index([contactAppId])
 }
 
 model Lead {
   studentId String  @id
-  source    String
-  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  source    String  // 兼容旧字段，导入时以 sourceCategory 填充
+  // 显式生命周期：NEW / CONTACTED / LOST / ENROLLED
+  status    String  @default("NEW")
+  sourceCategory     String?
+  sourceDetail       String?
+  subjectsOfInterest String?
+  campaignId         String?
+  createdAt DateTime @default(now())
+
+  student  Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([status])
+  @@index([campaignId])
+}
+
+model Campaign {
+  id             String   @id @default(cuid())
+  name           String
+  sourceCategory String
+  sourceDetail   String
+  campusId       String
+  defaultOwnerId String?
+  active         Boolean  @default(true)
+  token          String   @unique
+  createdAt      DateTime @default(now())
+
+  campus       Campus @relation(fields: [campusId], references: [id])
+  defaultOwner User?  @relation("CampaignOwner", fields: [defaultOwnerId], references: [id])
+  leads        Lead[]
+}
+
+// 每次导入都留痕：时间、来源、结果、原始 payload，便于排障。
+model LeadImportLog {
+  id        String   @id @default(cuid())
+  source    String   // API / CSV / PUBLIC_FORM
+  result    String   // CREATED / MERGED / REJECTED
+  studentId String?
+  message   String?
+  payload   String   // 原始 payload 的 JSON 文本
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model FollowUp {

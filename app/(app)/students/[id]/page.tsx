@@ -8,7 +8,7 @@ import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
   isEnrolled?: boolean;
-  grade: { id: string; name: string };
+  grade: { id: string; name: string } | null;
   campus: { name: string };
   sales: { id: string; name: string } | null;
   leadInfo: { source: string } | null;
@@ -111,7 +111,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
           <div className="grid grid-cols-2 gap-4">
             {[
               ["手机号", formatPhone(student.phone)],
-              ["年级", student.grade.name],
+              ["年级", student.grade?.name ?? "待定"],
               ["校区", student.campus.name],
               ["公立学校", student.publicSchool || "—"],
               ["归属销售", student.sales?.name || "—"],

@@ -18,6 +18,51 @@ export const LeadSource = {
 } as const;
 export type LeadSource = (typeof LeadSource)[keyof typeof LeadSource];
 
+// 线索转化前的漏斗状态。业务流不变：线索学生仍只能通过「建课包」转为在读，
+// 所以 ENROLLED 是派生的（有生效课包即在读，沿用现有 isEnrolled），
+// 不由 funnel 写入 —— funnel 只在 NEW / CONTACTED / LOST 之间流转。
+export const LeadStatus = {
+  NEW: "NEW",
+  CONTACTED: "CONTACTED",
+  LOST: "LOST",
+} as const;
+export type LeadStatus = (typeof LeadStatus)[keyof typeof LeadStatus];
+
+// 营销来源大类：线下活动 / 线上渠道 / 转介绍 / 其他。source_detail 是自由文本
+// （如「Markham 数学展 2026」「小红书」）。
+export const SourceCategory = {
+  OFFLINE_EVENT: "OFFLINE_EVENT",
+  ONLINE_CHANNEL: "ONLINE_CHANNEL",
+  REFERRAL: "REFERRAL",
+  OTHER: "OTHER",
+} as const;
+export type SourceCategory = (typeof SourceCategory)[keyof typeof SourceCategory];
+
+// 家长偏好的联系方式 App。用于去重的 contact_app_id（微信号/小红书号等）。
+export const ContactApp = {
+  PHONE: "PHONE",
+  WECHAT: "WECHAT",
+  XIAOHONGSHU: "XIAOHONGSHU",
+  WHATSAPP: "WHATSAPP",
+  OTHER: "OTHER",
+} as const;
+export type ContactApp = (typeof ContactApp)[keyof typeof ContactApp];
+
+// 导入来源与结果，写入 LeadImportLog 便于排障。
+export const ImportSource = {
+  API: "API",
+  CSV: "CSV",
+  PUBLIC_FORM: "PUBLIC_FORM",
+} as const;
+export type ImportSource = (typeof ImportSource)[keyof typeof ImportSource];
+
+export const ImportResult = {
+  CREATED: "CREATED",
+  MERGED: "MERGED",
+  REJECTED: "REJECTED",
+} as const;
+export type ImportResult = (typeof ImportResult)[keyof typeof ImportResult];
+
 export const ContactMethod = {
   PHONE: "PHONE",
   WECHAT: "WECHAT",

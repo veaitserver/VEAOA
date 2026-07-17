@@ -83,7 +83,7 @@ export default async function DashboardPage() {
             <Link key={s.id} href={`/students/${s.id}`} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50">
               <div>
                 <p className="font-medium text-slate-800 text-sm">{s.name}</p>
-                <p className="text-xs text-slate-400">{s.grade.name} · {s.campus.name}</p>
+                <p className="text-xs text-slate-400">{s.grade?.name ?? "待定"} · {s.campus.name}</p>
               </div>
               <span className="text-xs text-slate-400">{formatDate(s.createdAt)}</span>
             </Link>

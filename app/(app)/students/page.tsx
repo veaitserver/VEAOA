@@ -6,7 +6,7 @@ import { formatPhone } from "@/lib/utils";
 
 type Student = {
   id: string; name: string; phone: string; isEnrolled: boolean;
-  grade: { name: string }; campus: { name: string };
+  grade: { name: string } | null; campus: { name: string };
   sales: { name: string } | null;
   leadInfo: { source: string } | null;
   createdAt: string;
@@ -88,7 +88,7 @@ export default function StudentsPage() {
               <tr key={s.id} className="hover:bg-slate-50">
                 <td className="px-6 py-3 text-sm font-medium text-slate-800">{s.name}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{formatPhone(s.phone)}</td>
-                <td className="px-6 py-3 text-sm text-slate-500">{s.grade.name}</td>
+                <td className="px-6 py-3 text-sm text-slate-500">{s.grade?.name ?? "待定"}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{s.campus.name}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{s.sales?.name ?? "—"}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">

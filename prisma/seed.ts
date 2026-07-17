@@ -794,6 +794,36 @@ async function main() {
     },
   });
 
+  // ── Campaigns（营销活动 / 线索捕获）──────────────────────────────────────────
+  await prisma.campaign.upsert({
+    where: { id: "camp-mkm-expo" },
+    update: {},
+    create: {
+      id: "camp-mkm-expo",
+      name: "Markham 数学教育展 2026",
+      sourceCategory: "OFFLINE_EVENT",
+      sourceDetail: "Markham Math Expo 2026",
+      campusId: campusMarkham.id,
+      defaultOwnerId: salesMkm.id,
+      active: true,
+      token: "mkm-expo-2026",
+    },
+  });
+  await prisma.campaign.upsert({
+    where: { id: "camp-mkm-red" },
+    update: {},
+    create: {
+      id: "camp-mkm-red",
+      name: "小红书引流 · Markham",
+      sourceCategory: "ONLINE_CHANNEL",
+      sourceDetail: "小红书",
+      campusId: campusMarkham.id,
+      // 无默认负责人：走校区内轮询分配
+      active: true,
+      token: "mkm-red",
+    },
+  });
+
   // ── Summary ─────────────────────────────────────────────────────────────────
   console.log("✅ Seed complete");
   console.log("\n📋 Campuses: Markham | Richmond Hill | Scarborough | Mississauga");
