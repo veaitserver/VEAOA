@@ -9,9 +9,22 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { readFileSync } from "node:fs";
 
 const prisma = new PrismaClient();
 const BASE = process.env.PROBE_BASE ?? "http://localhost:3000";
+
+// 从 .env 读取线索导入 API key（探测要拿它构造合法/非法请求）。
+function readApiKey() {
+  if (process.env.LEAD_IMPORT_API_KEY) return process.env.LEAD_IMPORT_API_KEY;
+  try {
+    const env = readFileSync(new URL("../.env", import.meta.url), "utf8");
+    const m = env.match(/^LEAD_IMPORT_API_KEY="?([^"\r\n]+)"?/m);
+    return m?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ── 迷你 HTTP 客户端（每个实例一个独立 cookie jar，可同时持有多个会话）──────
 class Client {
@@ -460,6 +473,76 @@ async function run() {
     await prisma.scheduledLesson.delete({ where: { id: l.id } });
   }
   await prisma.coursePackage.delete({ where: { id: racePkg.id } });
+
+  // ── 阶段 5：线索导入 API ────────────────────────────────────────────────
+  console.log("\n阶段 5 — 线索导入 API");
+
+  const apiKey = readApiKey();
+  const PHONE = "6478880001";
+  const PHONE_APP = "6478880002"; // 不同电话、相同 contactAppId，测 App 账号去重
+  const cleanupLeads = async () => {
+    for (const ph of [PHONE, PHONE_APP]) {
+      await prisma.followUp.deleteMany({ where: { student: { phone: ph } } });
+      await prisma.lead.deleteMany({ where: { student: { phone: ph } } });
+      await prisma.student.deleteMany({ where: { phone: ph } });
+    }
+    await prisma.leadImportLog.deleteMany({ where: { studentId: null } });
+  };
+  await cleanupLeads();
+
+  const importReq = (key, body) =>
+    fetch(`${BASE}/api/leads/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(key ? { "x-api-key": key } : {}) },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+
+  const noKey = await importReq(null, { parent_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
+  check(5, "无 API key 应 401", noKey.status === 401, `实际 ${noKey.status}`);
+
+  const badKey = await importReq("wrong-key", { parent_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
+  check(5, "错误 API key 应 401", badKey.status === 401, `实际 ${badKey.status}`);
+
+  const leadCreated = await importReq(apiKey, {
+    parent_name: "Probe Parent", phone: `+1 (647) 888-0001`, grade: "Grade 9", postal_code: "L3T 7P9",
+    preferred_contact_app: "WECHAT", contact_app_id: "probe_app_01", subjects_of_interest: "Math",
+    campaign_token: "mkm-expo-2026",
+  });
+  const createdStudent = await prisma.student.findUnique({
+    where: { phone: PHONE }, include: { leadInfo: true, sales: true, followUps: true },
+  });
+  check(5, "合法 key + campaign 建档应 201", leadCreated.status === 201 && leadCreated.body.result === "CREATED",
+    `实际 ${leadCreated.status} ${leadCreated.body.result ?? ""}`);
+  check(5, "建档校区/来源取自 campaign，状态 NEW，邮编入库",
+    createdStudent?.campusId === "campus-markham" && createdStudent?.leadInfo?.status === "NEW" &&
+    createdStudent?.leadInfo?.sourceDetail === "Markham Math Expo 2026" && createdStudent?.postalCode === "L3T 7P9",
+    `校区 ${createdStudent?.campusId} / 状态 ${createdStudent?.leadInfo?.status} / 负责人 ${createdStudent?.sales?.name ?? "无"}`);
+  check(5, "新线索获次日回访跟进", (createdStudent?.followUps.length ?? 0) === 1 && !!createdStudent?.followUps[0]?.nextFollowUp,
+    `跟进数 ${createdStudent?.followUps.length}`);
+
+  const merged = await importReq(apiKey, { parent_name: "Probe Parent", phone: "647-888-0001", campaign_token: "mkm-red" });
+  const afterMerge = await prisma.student.findMany({ where: { phone: PHONE }, include: { followUps: true } });
+  check(5, "同电话再导入应合并不新建（200 MERGED）",
+    merged.status === 200 && merged.body.result === "MERGED" && afterMerge.length === 1 && afterMerge[0].followUps.length === 2,
+    `实际 ${merged.status} ${merged.body.result ?? ""}，该电话学生数 ${afterMerge.length}`);
+
+  await prisma.lead.update({ where: { studentId: createdStudent.id }, data: { status: "LOST" } });
+  await importReq(apiKey, { parent_name: "Probe Parent", phone: PHONE, campaign_token: "mkm-red" });
+  const afterFlip = await prisma.lead.findUnique({ where: { studentId: createdStudent.id } });
+  check(5, "流失线索重新触达应翻回 CONTACTED", afterFlip?.status === "CONTACTED", `实际 ${afterFlip?.status}`);
+
+  const noCampus = await importReq(apiKey, { parent_name: "No Campus", phone: "6478889999", source_category: "OTHER", source_detail: "x" });
+  check(5, "无 campaign 且无显式校区应 422 拒绝", noCampus.status === 422, `实际 ${noCampus.status}`);
+
+  const appDedup = await importReq(apiKey, {
+    parent_name: "Probe Parent Alt", phone: `+1 647-888-0002`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
+  });
+  const appDupCount = await prisma.student.count({ where: { phone: PHONE_APP } });
+  check(5, "相同联系App账号应合并（不同电话也去重）",
+    appDedup.body.result === "MERGED" && appDupCount === 0,
+    `实际 ${appDedup.body.result ?? appDedup.status}，PHONE_APP 学生数(应为0) ${appDupCount}`);
+
+  await cleanupLeads();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -475,7 +558,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4]) {
+for (const p of [1, 2, 3, 4, 5]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;
