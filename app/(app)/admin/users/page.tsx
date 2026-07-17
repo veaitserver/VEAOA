@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { formatPhone } from "@/lib/utils";
 
 const ALL_ROLES = [
   { value: "SUPER_ADMIN", label: "超级管理员" },
@@ -154,7 +155,7 @@ export default function UsersPage() {
             {users.map(u => (
               <tr key={u.id} className="hover:bg-slate-50">
                 <td className="px-6 py-3 text-sm font-medium text-slate-800">{u.name}</td>
-                <td className="px-6 py-3 text-sm text-slate-500">{u.phone}</td>
+                <td className="px-6 py-3 text-sm text-slate-500">{formatPhone(u.phone)}</td>
                 <td className="px-6 py-3">
                   <div className="flex flex-wrap gap-1">
                     {u.roles.map(r => (

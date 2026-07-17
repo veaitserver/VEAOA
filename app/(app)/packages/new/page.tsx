@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { formatPhone } from "@/lib/utils";
 
 type Grade = { id: string; name: string };
 type Subject = { id: string; name: string };
@@ -103,7 +104,7 @@ function NewPackageForm() {
                       <button key={s.id} type="button"
                         onClick={() => { setForm({ ...form, studentId: s.id }); setStudentSearch(s.name); setStudents([]); }}
                         className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
-                        {s.name} — {s.phone}
+                        {s.name} — {formatPhone(s.phone)}
                       </button>
                     ))}
                   </div>

@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { formatMoney, formatRate } from "@/lib/utils";
+import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils";
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
@@ -89,8 +89,8 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             ["年级 / 科目", `${pkg.grade.name} · ${pkg.subject.name}`],
             ["创建人", pkg.creator.name],
             ["确认人", pkg.confirmer?.name ?? "—"],
-            ["确认时间", pkg.confirmedAt ? new Date(pkg.confirmedAt).toLocaleString("zh-CN") : "—"],
-            ["创建时间", new Date(pkg.createdAt).toLocaleDateString("zh-CN")],
+            ["确认时间", pkg.confirmedAt ? formatDateTime(pkg.confirmedAt) : "—"],
+            ["创建时间", formatDate(pkg.createdAt)],
           ].map(([label, value]) => (
             <div key={label as string} className="flex justify-between text-sm">
               <span className="text-slate-400">{label}</span>
@@ -164,7 +164,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           <tbody className="divide-y divide-slate-100">
             {pkg.deductions.map(d => (
               <tr key={d.id} className="hover:bg-slate-50">
-                <td className="px-5 py-3 text-xs text-slate-500">{new Date(d.createdAt).toLocaleString("zh-CN")}</td>
+                <td className="px-5 py-3 text-xs text-slate-500">{formatDateTime(d.createdAt)}</td>
                 <td className="px-5 py-3 text-sm font-medium text-slate-800">{Number(d.hoursDeducted).toFixed(1)}h</td>
                 <td className="px-5 py-3">
                   {d.reversedAt ? (

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { formatMoney } from "@/lib/utils";
+import { formatMoney, formatDate } from "@/lib/utils";
 
 type SalesSummary = { id: string; name: string; count: number; totalAmount: number };
 type Package = {
@@ -117,7 +117,7 @@ export default function SalesReportPage() {
                 <td className="px-5 py-3 text-slate-500">{p.grade.name} · {p.subject.name}</td>
                 <td className="px-5 py-3 text-slate-500">{p.creator.name}</td>
                 <td className="px-5 py-3 text-slate-400 text-xs">
-                  {p.confirmedAt ? new Date(p.confirmedAt).toLocaleDateString("zh-CN") : "—"}
+                  {p.confirmedAt ? formatDate(p.confirmedAt) : "—"}
                 </td>
                 <td className="px-5 py-3 font-medium text-slate-800 text-right">
                   {formatMoney(p.totalAmount)}

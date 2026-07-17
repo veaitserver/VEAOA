@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { formatPhone } from "@/lib/utils";
 
 type Student = {
   id: string; name: string; phone: string; isEnrolled: boolean;
@@ -86,7 +87,7 @@ export default function StudentsPage() {
             {students.map(s => (
               <tr key={s.id} className="hover:bg-slate-50">
                 <td className="px-6 py-3 text-sm font-medium text-slate-800">{s.name}</td>
-                <td className="px-6 py-3 text-sm text-slate-500">{s.phone}</td>
+                <td className="px-6 py-3 text-sm text-slate-500">{formatPhone(s.phone)}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{s.grade.name}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{s.campus.name}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{s.sales?.name ?? "—"}</td>

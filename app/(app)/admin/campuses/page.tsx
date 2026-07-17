@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/utils";
 
 type Campus = { id: string; name: string; createdAt: string };
 
@@ -79,7 +80,7 @@ export default function CampusesPage() {
                   ) : c.name}
                 </td>
                 <td className="px-6 py-3 text-sm text-slate-500">
-                  {new Date(c.createdAt).toLocaleDateString("zh-CN")}
+                  {formatDate(c.createdAt)}
                 </td>
                 <td className="px-6 py-3 text-right space-x-2">
                   {editId === c.id ? (

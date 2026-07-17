@@ -469,7 +469,7 @@ export default function SchedulePage() {
     else { const d = await res.json(); setModalError(d.error); }
   }
 
-  const weekLabel = `${weekDays[0].toLocaleDateString("zh-CN", { month: "long", day: "numeric" })} – ${weekDays[6].toLocaleDateString("zh-CN", { month: "long", day: "numeric", year: "numeric" })}`;
+  const weekLabel = `${weekDays[0].toLocaleDateString("en-CA", { month: "long", day: "numeric" })} – ${weekDays[6].toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" })}`;
   const today = new Date();
 
   return (
@@ -523,7 +523,7 @@ export default function SchedulePage() {
         {/* Selected day headline */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">
-            {selectedDay.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" })}
+            {selectedDay.toLocaleDateString("en-CA", { month: "long", day: "numeric", weekday: "long" })}
           </h2>
           {/* Mobile legend */}
           <div className="flex gap-2 text-xs text-slate-400">

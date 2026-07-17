@@ -1,2 +1,8 @@
 [phases.setup]
 nixPkgs = ["nodejs_20"]
+
+# 机构在安大略。让服务器进程跑在多伦多时区，任何服务器端的「当天」计算
+# （如仪表盘今日课程）默认就用本地时区。核心的时区正确性另有代码保证
+# （lib/tz.ts、lib/utils.ts 显示钉死 America/Toronto），此处仅作纵深防御。
+[variables]
+TZ = "America/Toronto"

@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { formatMoney, formatRate } from "@/lib/utils";
+import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from "@/lib/utils";
 
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
@@ -110,13 +110,13 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
         <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             {[
-              ["手机号", student.phone],
+              ["手机号", formatPhone(student.phone)],
               ["年级", student.grade.name],
               ["校区", student.campus.name],
               ["公立学校", student.publicSchool || "—"],
               ["归属销售", student.sales?.name || "—"],
               ["线索来源", student.leadInfo ? LEAD_SOURCES[student.leadInfo.source] : "—"],
-              ["注册时间", new Date(student.createdAt).toLocaleDateString("zh-CN")],
+              ["注册时间", formatDate(student.createdAt)],
             ].map(([label, value]) => (
               <div key={label}>
                 <p className="text-xs text-slate-400">{label}</p>
@@ -244,12 +244,12 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
                     <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
                       {f.contactMethod === "PHONE" ? "📞 Phone" : "💬 WeChat"}
                     </span>
-                    <span className="text-xs text-slate-400">{new Date(f.followedAt).toLocaleString("zh-CN")}</span>
+                    <span className="text-xs text-slate-400">{formatDateTime(f.followedAt)}</span>
                     <span className="text-xs text-slate-400">by {f.sales.name}</span>
                   </div>
                   {f.nextFollowUp && (
                     <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                      下次: {new Date(f.nextFollowUp).toLocaleDateString("zh-CN")}
+                      下次: {formatDate(f.nextFollowUp)}
                     </span>
                   )}
                 </div>
@@ -279,7 +279,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               {student.lessons.map(l => (
                 <tr key={l.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-xs text-slate-600">
-                    {new Date(l.startTime).toLocaleString("zh-CN")}
+                    {formatDateTime(l.startTime)}
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-800">{l.package.subject.name}</td>
                   <td className="px-4 py-3 text-sm text-slate-500">{l.teacher.name}</td>

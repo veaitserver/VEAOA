@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { campusScope, type SessionUser } from "@/lib/permissions";
+import { torontoDayRange } from "@/lib/tz";
+import { formatDate } from "@/lib/utils";
 import Link from "next/link";
 
 export default async function DashboardPage() {
   const session = await auth();
   const sessionUser = session?.user as SessionUser | undefined;
-  const userRoles = sessionUser?.roles ?? [];
 
   // 只有 Student 有 campusId；课包/课程/日志都要顺着关系链过滤到学生身上。
   const scope = sessionUser ? campusScope(sessionUser) : { in: [] };
@@ -19,10 +20,7 @@ export default async function DashboardPage() {
     prisma.scheduledLesson.count({
       where: {
         ...viaStudent,
-        startTime: {
-          gte: new Date(new Date().setHours(0, 0, 0, 0)),
-          lt: new Date(new Date().setHours(23, 59, 59, 999)),
-        },
+        startTime: torontoDayRange(),
       },
     }),
     prisma.lessonLog.count({
@@ -87,7 +85,7 @@ export default async function DashboardPage() {
                 <p className="font-medium text-slate-800 text-sm">{s.name}</p>
                 <p className="text-xs text-slate-400">{s.grade.name} · {s.campus.name}</p>
               </div>
-              <span className="text-xs text-slate-400">{s.createdAt.toLocaleDateString("zh-CN")}</span>
+              <span className="text-xs text-slate-400">{formatDate(s.createdAt)}</span>
             </Link>
           ))}
         </div>

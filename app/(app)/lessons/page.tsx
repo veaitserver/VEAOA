@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { formatDate, formatTime } from "@/lib/utils";
 
 type Lesson = {
   id: string; startTime: string; endTime: string; lessonType: string;
@@ -110,10 +111,9 @@ export default function LessonsPage() {
               return (
                 <tr key={l.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-xs text-slate-600">
-                    <div>{new Date(l.startTime).toLocaleDateString("zh-CN")}</div>
+                    <div>{formatDate(l.startTime)}</div>
                     <div className="text-slate-400">
-                      {new Date(l.startTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} -
-                      {new Date(l.endTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                      {formatTime(l.startTime)} - {formatTime(l.endTime)}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm font-medium text-slate-800">{l.student.name}</td>
@@ -127,7 +127,7 @@ export default function LessonsPage() {
                       {l.log ? (
                         <div>
                           <p className="text-slate-700 line-clamp-2">{l.log.notes}</p>
-                          <p className="text-slate-400 mt-0.5">提交: {new Date(l.log.submittedAt).toLocaleDateString("zh-CN")}</p>
+                          <p className="text-slate-400 mt-0.5">提交: {formatDate(l.log.submittedAt)}</p>
                           {l.log.confirmedAt && l.log.confirmer && (
                             <p className="text-green-600">确认: {l.log.confirmer.name}</p>
                           )}
