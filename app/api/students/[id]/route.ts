@@ -39,7 +39,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           teacher: { select: { name: true } },
           classroom: true,
           package: { include: { subject: true } },
-          log: { include: { deduction: true } },
+          log: { include: { deductions: true } },
         },
         orderBy: { startTime: "desc" },
         take: 20,
@@ -52,7 +52,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const denied = denyCrossCampus(session.user as SessionUser, student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
-  return NextResponse.json(student);
+  // 压平成单个 deduction：只认「生效中」的那条。已撤销的课时已还回，
+  // 该课应重新计入「已排未消耗」，故撤销后 deduction 视为空。
+  const shaped = {
+    ...student,
+    lessons: student.lessons.map((l) => {
+      if (!l.log) return l;
+      const { deductions, ...log } = l.log;
+      return { ...l, log: { ...log, deduction: deductions.find((d) => !d.reversedAt) ?? null } };
+    }),
+  };
+
+  return NextResponse.json(shaped);
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {

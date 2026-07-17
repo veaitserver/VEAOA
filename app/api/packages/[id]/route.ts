@@ -7,6 +7,7 @@ import {
   denyCrossCampus,
   type SessionUser,
 } from "@/lib/permissions";
+import { roundHours } from "@/lib/hours";
 import { z } from "zod";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -76,11 +77,33 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
+  // 三个金额字段任改其一都要重新校验一致性：总价 === 总课时 × 单价。
+  const totalHours = parsed.data.totalHours ?? pkg.totalHours;
+  const pricePerHour = parsed.data.pricePerHour ?? pkg.pricePerHour;
+  const totalAmount = parsed.data.totalAmount ?? pkg.totalAmount;
+  if (Math.abs(totalAmount - totalHours * pricePerHour) > 0.01) {
+    return NextResponse.json({ error: "总价必须等于总课时 × 单价（折扣请调单价）" }, { status: 400 });
+  }
+
+  // 已消耗课时以扣课台账为准（remainingHours 可能被历史 bug 写坏）。
+  // 改总课时后余额 = 新总课时 − 已消耗；不允许改到低于已消耗。
+  const agg = await prisma.courseDeduction.aggregate({
+    where: { packageId: id, reversedAt: null },
+    _sum: { hoursDeducted: true },
+  });
+  const consumed = roundHours(Number(agg._sum.hoursDeducted ?? 0));
+  if (totalHours < consumed) {
+    return NextResponse.json(
+      { error: `总课时不能低于已消耗课时（已消耗 ${consumed}h）` },
+      { status: 400 },
+    );
+  }
+
   const updated = await prisma.coursePackage.update({
     where: { id },
     data: {
       ...parsed.data,
-      ...(parsed.data.totalHours ? { remainingHours: parsed.data.totalHours } : {}),
+      remainingHours: roundHours(totalHours - consumed),
     },
     include: { grade: true, subject: true },
   });

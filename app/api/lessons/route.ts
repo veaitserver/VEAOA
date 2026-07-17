@@ -23,7 +23,7 @@ export async function GET(req: Request) {
     }
   }
 
-  let where: Record<string, unknown> = { ...baseWhere };
+  const where: Record<string, unknown> = { ...baseWhere };
 
   if (phase === "pending_log") {
     where.log = null;
@@ -45,7 +45,10 @@ export async function GET(req: Request) {
         include: {
           subject: true,
           confirmer: { select: { name: true } },
-          deduction: { include: { reverser: { select: { name: true } } } },
+          deductions: {
+            include: { reverser: { select: { name: true } } },
+            orderBy: { createdAt: "desc" },
+          },
         },
       },
     },
@@ -53,5 +56,14 @@ export async function GET(req: Request) {
     take: 100,
   });
 
-  return NextResponse.json(lessons);
+  // 前端只关心「当前生效」的那条扣课记录：优先未撤销的，否则取最近一条。
+  // 把一对多压平成单个 deduction，保持客户端契约不变。
+  const shaped = lessons.map((l) => {
+    if (!l.log) return l;
+    const { deductions, ...log } = l.log;
+    const current = deductions.find((d) => !d.reversedAt) ?? deductions[0] ?? null;
+    return { ...l, log: { ...log, deduction: current } };
+  });
+
+  return NextResponse.json(shaped);
 }

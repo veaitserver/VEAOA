@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canSchedule, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { lessonHours, roundHours } from "@/lib/hours";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -117,35 +118,45 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "课包不属于该学生" }, { status: 400 });
   }
 
-  // Check available inventory
-  const durationHours = (new Date(endTime).getTime() - new Date(startTime).getTime()) / 3600000;
+  // 库存校验：remainingHours 只在核销时才扣，所以已排但未核销的课还没反映进去。
+  // 可用量 = 剩余课时 − 已排未核销的课时总和，避免把一个课包超额排课。
+  const durationHours = lessonHours(new Date(startTime), new Date(endTime));
 
-  if (Number(pkg.remainingHours) < durationHours) {
-    return NextResponse.json({ error: "课包剩余课时不足" }, { status: 400 });
+  const packageLessons = await prisma.scheduledLesson.findMany({
+    where: { packageId },
+    include: { log: { include: { deductions: true } } },
+  });
+  const pendingHours = roundHours(
+    packageLessons
+      .filter((l) => !l.log || !l.log.deductions.some((d) => !d.reversedAt))
+      .reduce((sum, l) => sum + lessonHours(l.startTime, l.endTime), 0),
+  );
+  const available = roundHours(Number(pkg.remainingHours) - pendingHours);
+  if (durationHours > available) {
+    return NextResponse.json(
+      { error: `课包可用课时不足（剩余 ${roundHours(Number(pkg.remainingHours))}h，已排未核销 ${pendingHours}h，可用 ${available}h）` },
+      { status: 400 },
+    );
   }
 
+  const overlap = { startTime: { lt: new Date(endTime) }, endTime: { gt: new Date(startTime) } };
+
   // Conflict check: teacher
-  const teacherConflict = await prisma.scheduledLesson.findFirst({
-    where: {
-      teacherId,
-      startTime: { lt: new Date(endTime) },
-      endTime: { gt: new Date(startTime) },
-    },
-  });
+  const teacherConflict = await prisma.scheduledLesson.findFirst({ where: { teacherId, ...overlap } });
   if (teacherConflict) {
     return NextResponse.json({ error: "该时段老师已有课程，存在冲突" }, { status: 409 });
   }
 
   // Conflict check: classroom
-  const classroomConflict = await prisma.scheduledLesson.findFirst({
-    where: {
-      classroomId,
-      startTime: { lt: new Date(endTime) },
-      endTime: { gt: new Date(startTime) },
-    },
-  });
+  const classroomConflict = await prisma.scheduledLesson.findFirst({ where: { classroomId, ...overlap } });
   if (classroomConflict) {
     return NextResponse.json({ error: "该时段教室已被占用，存在冲突" }, { status: 409 });
+  }
+
+  // Conflict check: student —— 原先漏了这一维，同一学生能被同时排进两个教室。
+  const studentConflict = await prisma.scheduledLesson.findFirst({ where: { studentId, ...overlap } });
+  if (studentConflict) {
+    return NextResponse.json({ error: "该时段学生已有课程，存在冲突" }, { status: 409 });
   }
 
   const lesson = await prisma.scheduledLesson.create({

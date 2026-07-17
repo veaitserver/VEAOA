@@ -177,17 +177,19 @@ model LessonLog {
   confirmedById String?
   confirmedAt   DateTime?
 
-  lesson    ScheduledLesson  @relation(fields: [lessonId], references: [id])
-  teacher   User             @relation("LogTeacher", fields: [teacherId], references: [id])
-  subject   Subject          @relation(fields: [subjectId], references: [id])
-  confirmer User?            @relation("LogConfirmer", fields: [confirmedById], references: [id])
-  deduction CourseDeduction?
+  lesson     ScheduledLesson   @relation(fields: [lessonId], references: [id])
+  teacher    User              @relation("LogTeacher", fields: [teacherId], references: [id])
+  subject    Subject           @relation(fields: [subjectId], references: [id])
+  confirmer  User?             @relation("LogConfirmer", fields: [confirmedById], references: [id])
+  // 一对多：核销→撤销→再核销会留下多条记录，生效的是 reversedAt 为空的那条，
+  // 已撤销的保留下来作为审计痕迹。
+  deductions CourseDeduction[]
 }
 
 model CourseDeduction {
   id            String    @id @default(cuid())
   packageId     String
-  logId         String    @unique
+  logId         String
   hoursDeducted Float
   createdAt     DateTime  @default(now())
   reversedAt    DateTime?

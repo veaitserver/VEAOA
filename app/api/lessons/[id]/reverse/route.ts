@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canReverseDeduction, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { roundHours } from "@/lib/hours";
+
+class AlreadyReversed extends Error {}
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -16,7 +19,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const lesson = await prisma.scheduledLesson.findUnique({
     where: { id },
     include: {
-      log: { include: { deduction: true } },
+      log: { include: { deductions: true } },
       student: { select: { campusId: true } },
     },
   });
@@ -26,29 +29,41 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
-  if (!lesson.log?.deduction) return NextResponse.json({ error: "该课程未核销" }, { status: 400 });
-  if (lesson.log.deduction.reversedAt) return NextResponse.json({ error: "该核销已撤销" }, { status: 400 });
+  // 生效中的扣课记录 = reversedAt 为空的那条。撤销后又重新核销会有多条，只撤最新生效的。
+  const active = lesson.log?.deductions.find((d) => !d.reversedAt);
+  if (!active) return NextResponse.json({ error: "该课程未核销" }, { status: 400 });
 
-  const hoursDeducted = Number(lesson.log.deduction.hoursDeducted);
+  const hoursDeducted = roundHours(Number(active.hoursDeducted));
+  const log = lesson.log!;
 
-  const result = await prisma.$transaction(async (tx) => {
-    const updatedDeduction = await tx.courseDeduction.update({
-      where: { id: lesson.log!.deduction!.id },
-      data: { reversedAt: new Date(), reversedById: sessionUser.id },
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // 双击撤销防护：updateMany + reversedAt:null 谓词，count === 0 说明另一并发请求
+      // 已经撤销过，直接回滚，避免课时被重复加回。
+      const reversed = await tx.courseDeduction.updateMany({
+        where: { id: active.id, reversedAt: null },
+        data: { reversedAt: new Date(), reversedById: sessionUser.id },
+      });
+      if (reversed.count === 0) throw new AlreadyReversed();
+
+      await tx.coursePackage.update({
+        where: { id: lesson.packageId },
+        data: { remainingHours: { increment: hoursDeducted } },
+      });
+
+      await tx.lessonLog.update({
+        where: { id: log.id },
+        data: { confirmedById: null, confirmedAt: null },
+      });
+
+      return tx.courseDeduction.findUnique({ where: { id: active.id } });
     });
 
-    await tx.coursePackage.update({
-      where: { id: lesson.packageId },
-      data: { remainingHours: { increment: hoursDeducted } },
-    });
-
-    await tx.lessonLog.update({
-      where: { id: lesson.log!.id },
-      data: { confirmedById: null, confirmedAt: null },
-    });
-
-    return updatedDeduction;
-  });
-
-  return NextResponse.json(result);
+    return NextResponse.json(result);
+  } catch (e) {
+    if (e instanceof AlreadyReversed) {
+      return NextResponse.json({ error: "该核销已撤销" }, { status: 400 });
+    }
+    throw e;
+  }
 }

@@ -572,10 +572,10 @@ async function main() {
     },
   });
   await prisma.courseDeduction.upsert({
-    where: { logId: log1.id },
+    where: { id: "ded-mkm-1" },
     update: {},
     create: {
-      packageId: "pkg-mkm-1", logId: log1.id, hoursDeducted: 2,
+      id: "ded-mkm-1", packageId: "pkg-mkm-1", logId: log1.id, hoursDeducted: 2,
     },
   });
 
@@ -673,10 +673,10 @@ async function main() {
     },
   });
   await prisma.courseDeduction.upsert({
-    where: { logId: log2.id },
+    where: { id: "ded-rh-1" },
     update: {},
     create: {
-      packageId: "pkg-rh-1", logId: log2.id, hoursDeducted: 2,
+      id: "ded-rh-1", packageId: "pkg-rh-1", logId: log2.id, hoursDeducted: 2,
     },
   });
 
@@ -728,10 +728,10 @@ async function main() {
     },
   });
   await prisma.courseDeduction.upsert({
-    where: { logId: log3.id },
+    where: { id: "ded-scar-1" },
     update: {},
     create: {
-      packageId: "pkg-scar-1", logId: log3.id, hoursDeducted: 2,
+      id: "ded-scar-1", packageId: "pkg-scar-1", logId: log3.id, hoursDeducted: 2,
     },
   });
 

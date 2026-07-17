@@ -61,6 +61,11 @@ export async function POST(req: Request) {
 
   const { studentId, gradeId, subjectId, totalHours, pricePerHour, totalAmount, notes } = parsed.data;
 
+  // 总价 === 总课时 × 单价，折扣打在单价上。
+  if (Math.abs(totalAmount - totalHours * pricePerHour) > 0.01) {
+    return NextResponse.json({ error: "总价必须等于总课时 × 单价（折扣请调单价）" }, { status: 400 });
+  }
+
   // studentId 直接来自请求体：不校验就能给别校区的学生开单，
   // 且 createdById 记的是自己 —— 销售报表会把提成算到攻击者头上。
   const student = await prisma.student.findUnique({

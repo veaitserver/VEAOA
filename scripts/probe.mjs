@@ -104,6 +104,12 @@ async function setup() {
   const grade = await prisma.grade.findFirst();
   const subject = await prisma.subject.findFirst();
   const rhRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-rh" } });
+  // 第二间 RH 教室：撞课测试要同校区、不同教室不同老师，只让「学生」这一维冲突。
+  const rhRoom2 = await prisma.classroom.upsert({
+    where: { id: "room-rh-probe" },
+    update: {},
+    create: { id: "room-rh-probe", name: "Probe Room RH", campusId: "campus-rh", capacity: 4 },
+  });
 
   // Richmond Hill 的一次性学生 + 待审批课包 + 已激活课包 + 未来课程
   const student = await prisma.student.upsert({
@@ -139,13 +145,14 @@ async function setup() {
     },
   });
 
-  fx = { hr, admin, rhTeacher, student, pending, active, lesson, grade, subject, rhRoom, base };
+  fx = { hr, admin, rhTeacher, student, pending, active, lesson, grade, subject, rhRoom, rhRoom2, base };
 }
 
 async function teardown() {
   await prisma.scheduledLesson.deleteMany({ where: { studentId: fx.student.id } });
   await prisma.coursePackage.deleteMany({ where: { studentId: fx.student.id } });
   await prisma.student.deleteMany({ where: { phone: FIX.studentPhone } });
+  await prisma.classroom.deleteMany({ where: { id: "room-rh-probe" } });
   await prisma.userRole.deleteMany({ where: { userId: fx.hr.id } });
   await prisma.userCampus.deleteMany({ where: { userId: fx.hr.id } });
   await prisma.user.deleteMany({ where: { phone: FIX.hrPhone } });
@@ -304,17 +311,44 @@ async function run() {
 
   const finance = new Client("财务"); await finance.login("6470000005", "finance123");
 
-  // 15. 改 totalHours 不应重置 remainingHours
-  await prisma.coursePackage.update({
-    where: { id: fx.active.id }, data: { remainingHours: 4 }, // 假装已消耗 6h
+  // 15. 改 totalHours 不应还原已消耗课时。用真实扣课记录模拟已消耗 6h
+  //     （已消耗以扣课台账为准，不是信 remainingHours）。
+  const consumedSlot = new Date(fx.base.getTime() + 3 * 86400000);
+  const consumedLesson = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
+      classroomId: fx.rhRoom.id, startTime: consumedSlot, endTime: new Date(consumedSlot.getTime() + 6 * 3600000),
+    },
   });
+  const consumedLog = await prisma.lessonLog.create({
+    data: { lessonId: consumedLesson.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "probe consumed" },
+  });
+  await prisma.courseDeduction.create({
+    data: { packageId: fx.active.id, logId: consumedLog.id, hoursDeducted: 6 },
+  });
+  await prisma.coursePackage.update({ where: { id: fx.active.id }, data: { remainingHours: 4 } });
+
+  // 改总课时 10→12，剩余应变成 12−6=6，而不是被重置成 12。
   const bump = await finance.req("PUT", `/api/packages/${fx.active.id}`, {
-    totalHours: 10, pricePerHour: 100, totalAmount: 1000,
+    totalHours: 12, pricePerHour: 100, totalAmount: 1200,
   });
   const afterBump = await prisma.coursePackage.findUnique({ where: { id: fx.active.id } });
-  check(4, "改 totalHours 不得把已消耗课时还原", Number(afterBump.remainingHours) === 4,
-    `HTTP ${bump.status}，剩余课时 4h → ${afterBump.remainingHours}h`);
-  await prisma.coursePackage.update({ where: { id: fx.active.id }, data: { remainingHours: 10 } });
+  check(4, "改 totalHours 后余额应按已消耗重算（12−6=6）", Number(afterBump.remainingHours) === 6,
+    `HTTP ${bump.status}，剩余课时 ${afterBump.remainingHours}h`);
+
+  // 不得把总课时改到低于已消耗（6h）。
+  const shrink = await finance.req("PUT", `/api/packages/${fx.active.id}`, {
+    totalHours: 4, pricePerHour: 100, totalAmount: 400,
+  });
+  check(4, "总课时不得改到低于已消耗", shrink.status === 400, `实际 ${shrink.status}`);
+
+  // 清理，把 fx.active 恢复成 10h/10h 供后续测试复用
+  await prisma.courseDeduction.deleteMany({ where: { logId: consumedLog.id } });
+  await prisma.lessonLog.delete({ where: { id: consumedLog.id } });
+  await prisma.scheduledLesson.delete({ where: { id: consumedLesson.id } });
+  await prisma.coursePackage.update({
+    where: { id: fx.active.id }, data: { totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10 },
+  });
 
   // 21. 总价必须 = 总课时 × 单价
   const badMath = await finance.req("PUT", `/api/packages/${fx.active.id}`, {
@@ -322,10 +356,9 @@ async function run() {
   });
   check(4, "总价 ≠ 总课时 × 单价 应被拒", badMath.status === 400, `实际 ${badMath.status}`);
 
-  // 18. 学生撞课
+  // 18. 学生撞课（同校区、不同教室不同老师，只让「学生」这一维冲突）
   const t2 = new Client("RH 老师"); await t2.login("6470000007", "teacher123");
   const slot = new Date(fx.base.getTime() + 7 * 86400000);
-  const mkmRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-markham" } });
   const first = await prisma.scheduledLesson.create({
     data: {
       teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
@@ -334,7 +367,7 @@ async function run() {
   });
   const clash = await t2.req("POST", "/api/schedule", {
     teacherId: fx.admin.id, studentId: fx.student.id, packageId: fx.active.id,
-    classroomId: mkmRoom.id,
+    classroomId: fx.rhRoom2.id,
     startTime: slot.toISOString(), endTime: new Date(slot.getTime() + 3600000).toISOString(),
   });
   check(4, "同一学生同一时段不得被排两节课", clash.status === 409, `实际 ${clash.status}`);
@@ -364,6 +397,7 @@ async function run() {
   const acad = new Client("教务"); await acad.login("6470000004", "acad123");
   const mkmStudent = await prisma.student.findFirst({ where: { campusId: "campus-markham" } });
   const mkmTeacherRow = await prisma.user.findUnique({ where: { phone: "6470000002" } });
+  const mkmRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-markham" } });
   const cyclePkg = await prisma.coursePackage.create({
     data: {
       studentId: mkmStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
