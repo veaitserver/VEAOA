@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { formatMoney, formatRate } from "@/lib/utils";
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
@@ -77,7 +78,7 @@ export default function PackagesPage() {
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600">{p.grade.name} · {p.subject.name}</td>
                 <td className="px-4 py-3 text-sm text-slate-500 font-mono text-xs">
-                  {Number(p.totalHours).toFixed(1)}h × ¥{Number(p.pricePerHour).toFixed(0)} = ¥{Number(p.totalAmount).toLocaleString()}
+                  {Number(p.totalHours).toFixed(1)}h × {formatRate(p.pricePerHour)} = {formatMoney(p.totalAmount)}
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-800">{Number(p.remainingHours).toFixed(1)}h</td>
                 <td className="px-4 py-3">

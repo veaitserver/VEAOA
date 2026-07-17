@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { formatMoney } from "@/lib/utils";
 
 type SalesSummary = { id: string; name: string; count: number; totalAmount: number };
 type Package = {
@@ -56,7 +57,7 @@ export default function SalesReportPage() {
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 flex items-center justify-between">
         <div>
           <p className="text-sm text-blue-600">Active 订单总金额</p>
-          <p className="text-3xl font-bold text-blue-800">¥{total.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</p>
+          <p className="text-3xl font-bold text-blue-800">{formatMoney(total)}</p>
         </div>
         <div className="text-right">
           <p className="text-sm text-blue-600">订单数量</p>
@@ -82,7 +83,7 @@ export default function SalesReportPage() {
                 <td className="px-5 py-3 text-sm font-medium text-slate-800">{s.name}</td>
                 <td className="px-5 py-3 text-sm text-slate-500 text-right">{s.count}</td>
                 <td className="px-5 py-3 text-sm font-medium text-slate-800 text-right">
-                  ¥{s.totalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
+                  {formatMoney(s.totalAmount)}
                 </td>
                 <td className="px-5 py-3 text-sm text-slate-500 text-right">
                   {total > 0 ? ((s.totalAmount / total) * 100).toFixed(1) : 0}%
@@ -119,7 +120,7 @@ export default function SalesReportPage() {
                   {p.confirmedAt ? new Date(p.confirmedAt).toLocaleDateString("zh-CN") : "—"}
                 </td>
                 <td className="px-5 py-3 font-medium text-slate-800 text-right">
-                  ¥{Number(p.totalAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
+                  {formatMoney(p.totalAmount)}
                 </td>
               </tr>
             ))}

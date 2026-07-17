@@ -143,14 +143,14 @@ function NewPackageForm() {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">课时单价 P (¥) *</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">课时单价 P ($) *</label>
                 <input type="number" step="1" min="1" value={form.pricePerHour}
                   onChange={e => handleTriangle("pricePerHour", e.target.value)}
                   required placeholder="e.g. 200"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">总金额 M (¥) *</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">总金额 M ($) *</label>
                 <input type="number" step="1" min="1" value={form.totalAmount}
                   onChange={e => handleTriangle("totalAmount", e.target.value)}
                   required placeholder="e.g. 4000"

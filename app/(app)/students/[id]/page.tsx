@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import { formatMoney, formatRate } from "@/lib/utils";
 
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
@@ -170,7 +171,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
                 {student.packages.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">{p.grade.name} · {p.subject.name}</td>
-                    <td className="px-4 py-3 text-sm text-slate-500">{p.totalHours}h / ¥{p.pricePerHour} / ¥{p.totalAmount}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500">{p.totalHours}h / {formatRate(p.pricePerHour)} / {formatMoney(p.totalAmount)}</td>
                     <td className="px-4 py-3 text-sm text-slate-800">{Number(p.remainingHours).toFixed(1)}h</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[p.status]}`}>{STATUS_LABELS[p.status]}</span>

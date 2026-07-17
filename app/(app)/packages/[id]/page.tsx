@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import { formatMoney, formatRate } from "@/lib/utils";
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
@@ -108,11 +109,11 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-slate-500">课时单价</span>
-              <span className="font-bold text-slate-800">¥{Number(pkg.pricePerHour).toFixed(0)}/h</span>
+              <span className="font-bold text-slate-800">{formatRate(pkg.pricePerHour)}</span>
             </div>
             <div className="flex justify-between text-sm border-t border-slate-200 pt-2">
               <span className="text-slate-500">总金额</span>
-              <span className="font-bold text-blue-700 text-lg">¥{Number(pkg.totalAmount).toLocaleString()}</span>
+              <span className="font-bold text-blue-700 text-lg">{formatMoney(pkg.totalAmount)}</span>
             </div>
             <div className="border-t border-slate-200 pt-2 space-y-1">
               <div className="flex justify-between text-sm">

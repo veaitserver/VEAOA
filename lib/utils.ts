@@ -24,7 +24,14 @@ export function formatHours(hours: number | string | null): string {
   return `${Number(hours).toFixed(1)}h`;
 }
 
+// 机构在安大略（GTA），一律加币。
 export function formatMoney(amount: number | string | null): string {
   if (amount === null || amount === undefined) return "—";
-  return `¥${Number(amount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  return `$${Number(amount).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** 课时单价，如 $80/h（整数，无小数）。 */
+export function formatRate(amount: number | string | null): string {
+  if (amount === null || amount === undefined) return "—";
+  return `$${Number(amount).toLocaleString("en-CA", { maximumFractionDigits: 2 })}/h`;
 }
