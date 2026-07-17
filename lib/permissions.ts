@@ -116,6 +116,22 @@ export function canSchedule(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
+// ── 页面/报表的可见性 ────────────────────────────────────────────────────────
+// Sidebar 原先自带一张角色表来决定显示哪些导航项，但接口侧完全不校验，
+// 那张表纯属化妆品。现在两边共用下面这几个函数，避免第二份事实来源。
+
+export function canViewPackages(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
+export function canViewSalesReport(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
+export function canViewTeacherReport(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: "超级管理员",
   HR: "HR",

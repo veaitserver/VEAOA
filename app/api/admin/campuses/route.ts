@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageUsers } from "@/lib/permissions";
-import type { Role } from "@/lib/enums";
+import { campusScope, canManageUsers, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({ name: z.string().min(1, "校区名称不能为空") });
@@ -11,15 +10,20 @@ export async function GET() {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const campuses = await prisma.campus.findMany({ orderBy: { createdAt: "asc" } });
+  // 这份列表同时是建档/建账号表单的下拉数据源，销售也要读，不能按角色一刀切；
+  // 但要收敛到本人有权的校区，超管才看得到全部。
+  const scope = campusScope(session.user as SessionUser);
+  const campuses = await prisma.campus.findMany({
+    where: scope ? { id: scope } : {},
+    orderBy: { createdAt: "asc" },
+  });
   return NextResponse.json(campuses);
 }
 
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = session.user as { roles: Role[]; campusIds: string[] };
-  if (!canManageUsers({ ...user, id: (session.user as { id: string }).id, name: session.user.name ?? "" })) {
+  if (!canManageUsers(session.user as SessionUser)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { canSubmitLog, denyCrossCampus, isSuperAdmin, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({
@@ -13,14 +13,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sessionUser = session.user as { id: string; roles: Role[] };
-  if (!sessionUser.roles.some(r => ["TEACHER", "SUPER_ADMIN"].includes(r as string))) {
+  const sessionUser = session.user as SessionUser;
+  if (!canSubmitLog(sessionUser)) {
     return NextResponse.json({ error: "仅老师可提交上课日志" }, { status: 403 });
   }
 
   const { id } = await params;
-  const lesson = await prisma.scheduledLesson.findUnique({ where: { id }, include: { log: true } });
+  const lesson = await prisma.scheduledLesson.findUnique({
+    where: { id },
+    include: { log: true, student: { select: { campusId: true } } },
+  });
   if (!lesson) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 下面 create 时 teacherId 记的是调用者，不是 lesson.teacherId ——
+  // 不校验归属，老师就能把别人的课记成自己的工时，并顺带占掉那节课的日志位。
+  if (!isSuperAdmin(sessionUser) && lesson.teacherId !== sessionUser.id) {
+    return NextResponse.json({ error: "只能为自己的课程提交日志" }, { status: 403 });
+  }
+
   if (lesson.log) return NextResponse.json({ error: "已提交日志" }, { status: 400 });
 
   const body = await req.json();

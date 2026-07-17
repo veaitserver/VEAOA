@@ -4,33 +4,40 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import type { Role } from "@/lib/enums";
+import {
+  canManageUsers,
+  canViewPackages,
+  canViewSalesReport,
+  canViewTeacherReport,
+  type SessionUser,
+} from "@/lib/permissions";
 
 type NavItem = {
   href: string;
   label: string;
   icon: string;
-  roles?: Role[];
+  /** 与接口共用 lib/permissions 里的同一个函数，避免导航和接口各说各话。 */
+  can?: (user: SessionUser) => boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "仪表盘", icon: "🏠" },
   { href: "/students", label: "学生管理", icon: "👨‍🎓" },
-  { href: "/packages", label: "课包管理", icon: "📦", roles: ["SALES", "PRINCIPAL", "FINANCE", "SUPER_ADMIN"] as Role[] },
+  { href: "/packages", label: "课包管理", icon: "📦", can: canViewPackages },
   { href: "/schedule", label: "排课", icon: "📅" },
   { href: "/lessons", label: "核销管理", icon: "✅" },
-  { href: "/reports/sales", label: "销售报表", icon: "📊", roles: ["SALES", "PRINCIPAL", "FINANCE", "SUPER_ADMIN"] as Role[] },
-  { href: "/reports/teachers", label: "工时报表", icon: "⏱️", roles: ["TEACHER", "ACADEMIC_ADMIN", "PRINCIPAL", "FINANCE", "SUPER_ADMIN"] as Role[] },
-  { href: "/admin/campuses", label: "校区管理", icon: "🏫", roles: ["SUPER_ADMIN", "HR"] as Role[] },
-  { href: "/admin/users", label: "用户管理", icon: "👥", roles: ["SUPER_ADMIN", "HR"] as Role[] },
+  { href: "/reports/sales", label: "销售报表", icon: "📊", can: canViewSalesReport },
+  { href: "/reports/teachers", label: "工时报表", icon: "⏱️", can: canViewTeacherReport },
+  { href: "/admin/campuses", label: "校区管理", icon: "🏫", can: canManageUsers },
+  { href: "/admin/users", label: "用户管理", icon: "👥", can: canManageUsers },
 ];
 
 export default function Sidebar({ userRoles }: { userRoles: Role[] }) {
   const pathname = usePathname();
 
-  const visibleItems = NAV_ITEMS.filter((item) => {
-    if (!item.roles) return true;
-    return item.roles.some((r) => userRoles.includes(r));
-  });
+  // 导航只按角色显隐，campusIds/id/name 与判断无关。
+  const asUser: SessionUser = { id: "", name: "", roles: userRoles, campusIds: [] };
+  const visibleItems = NAV_ITEMS.filter((item) => !item.can || item.can(asUser));
 
   return (
     <div className="flex flex-col h-full w-60 bg-slate-800 text-slate-200">

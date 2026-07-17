@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { campusScope, canSchedule, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -24,17 +24,15 @@ export async function GET(req: Request) {
   const teacherId = searchParams.get("teacherId");
   const classroomId = searchParams.get("classroomId");
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
+  const sessionUser = session.user as SessionUser;
 
   const where: Record<string, unknown> = {};
   if (start) where.startTime = { gte: new Date(start) };
   if (end) where.endTime = { lte: new Date(end) };
   if (teacherId) where.teacherId = teacherId;
   if (classroomId) where.classroomId = classroomId;
-  if (!isSuperAdmin) {
-    where.student = { campusId: { in: sessionUser.campusIds } };
-  }
+  const scope = campusScope(sessionUser);
+  if (scope) where.student = { campusId: scope };
 
   const lessons = await prisma.scheduledLesson.findMany({
     where,
@@ -78,16 +76,45 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const sessionUser = session.user as SessionUser;
+  if (!canSchedule(sessionUser)) {
+    return NextResponse.json({ error: "无权排课" }, { status: 403 });
+  }
+
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const { teacherId, studentId, packageId, classroomId, startTime, endTime, lessonType } = parsed.data;
 
+  // studentId / classroomId 都来自请求体。不校验校区就能占用别校区的教室和老师，
+  // 既是越权也是拒绝服务。
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { campusId: true },
+  });
+  if (!student) return NextResponse.json({ error: "学生不存在" }, { status: 404 });
+  const studentDenied = denyCrossCampus(sessionUser, student.campusId);
+  if (studentDenied) return NextResponse.json({ error: studentDenied }, { status: 403 });
+
+  const classroom = await prisma.classroom.findUnique({
+    where: { id: classroomId },
+    select: { campusId: true },
+  });
+  if (!classroom) return NextResponse.json({ error: "教室不存在" }, { status: 404 });
+  const roomDenied = denyCrossCampus(sessionUser, classroom.campusId);
+  if (roomDenied) return NextResponse.json({ error: roomDenied }, { status: 403 });
+  if (classroom.campusId !== student.campusId) {
+    return NextResponse.json({ error: "教室与学生不在同一校区" }, { status: 400 });
+  }
+
   // Check package is ACTIVE
   const pkg = await prisma.coursePackage.findUnique({ where: { id: packageId } });
   if (!pkg || pkg.status !== "ACTIVE") {
     return NextResponse.json({ error: "课包未激活，无法排课" }, { status: 400 });
+  }
+  if (pkg.studentId !== studentId) {
+    return NextResponse.json({ error: "课包不属于该学生" }, { status: 400 });
   }
 
   // Check available inventory

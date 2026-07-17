@@ -1,27 +1,28 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import { campusScope, canViewTeacherReport, type SessionUser } from "@/lib/permissions";
 
 export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!canViewTeacherReport(session.user as SessionUser)) {
+    return NextResponse.json({ error: "无权查看工时报表" }, { status: 403 });
+  }
 
   const { searchParams } = new URL(req.url);
   const teacherId = searchParams.get("teacherId");
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
+  const sessionUser = session.user as SessionUser;
 
   const where: Record<string, unknown> = {
     log: { confirmedAt: { not: null } },
   };
 
-  if (!isSuperAdmin) {
-    where.student = { campusId: { in: sessionUser.campusIds } };
-  }
+  const scope = campusScope(sessionUser);
+  if (scope) where.student = { campusId: scope };
   if (teacherId) where.teacherId = teacherId;
   if (startDate || endDate) {
     const dateFilter: Record<string, Date> = {};

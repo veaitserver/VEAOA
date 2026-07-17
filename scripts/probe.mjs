@@ -283,8 +283,13 @@ async function run() {
     });
   }
 
+  // 校区列表是建档下拉框的数据源，销售要用，不能一刀切禁掉；
+  // 但每个人只应看到自己有权的校区。
   const teacherCampuses = await mkmTeacher.req("GET", "/api/admin/campuses");
-  check(3, "老师不得读校区管理列表", blocked(teacherCampuses), `实际 ${teacherCampuses.status}`);
+  const foreign = (Array.isArray(teacherCampuses.body) ? teacherCampuses.body : [])
+    .filter((c) => c.id !== "campus-markham");
+  check(3, "校区列表应收敛到本人校区", teacherCampuses.status === 200 && foreign.length === 0,
+    `HTTP ${teacherCampuses.status}，看到 ${Array.isArray(teacherCampuses.body) ? teacherCampuses.body.length : "?"} 个校区，其中 ${foreign.length} 个是外校区`);
 
   const stealLog = await mkmTeacher.req("POST", `/api/lessons/${fx.lesson.id}/log`, {
     subjectId: fx.subject.id, notes: "probe: 别人的课",
