@@ -319,6 +319,20 @@ async function run() {
     `HTTP ${stealLog.status}${logNow ? ` — 工时被记到 ${logNow.teacherId}` : ""}`);
   if (logNow) await prisma.lessonLog.delete({ where: { id: logNow.id } });
 
+  // 校区/教室管理仅限超级管理员（校长这种高权限角色也不行）
+  const principal = new Client("Markham 校长"); await principal.login("6470000003", "principal123");
+  const roomBlocked = await principal.req("POST", "/api/admin/classrooms", { name: "x", campusId: "campus-markham" });
+  check(3, "非超管（校长）不得新建教室", blocked(roomBlocked), `实际 ${roomBlocked.status}`);
+  const campusBlocked = await principal.req("POST", "/api/admin/campuses", { name: "x" });
+  check(3, "非超管（校长）不得新建校区", blocked(campusBlocked), `实际 ${campusBlocked.status}`);
+
+  const roomCreate = await admin.req("POST", "/api/admin/classrooms", { name: "Probe Room", campusId: "campus-markham", capacity: 5 });
+  check(3, "超管可新建教室", roomCreate.status === 201, `实际 ${roomCreate.status}`);
+  const busyRoom = await prisma.classroom.findFirst({ where: { lessons: { some: {} } }, select: { id: true } });
+  const delBusy = await admin.req("DELETE", `/api/admin/classrooms/${busyRoom.id}`);
+  check(3, "有排课记录的教室不得删除", delBusy.status === 400, `实际 ${delBusy.status}`);
+  if (roomCreate.status === 201) await admin.req("DELETE", `/api/admin/classrooms/${roomCreate.body.id}`);
+
   // ── 阶段 4：业务逻辑 ────────────────────────────────────────────────────
   console.log("\n阶段 4 — 业务逻辑");
 

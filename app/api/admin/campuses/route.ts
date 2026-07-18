@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canManageUsers, type SessionUser } from "@/lib/permissions";
+import { campusScope, isSuperAdmin, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({ name: z.string().min(1, "校区名称不能为空") });
@@ -23,8 +23,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canManageUsers(session.user as SessionUser)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isSuperAdmin(session.user as SessionUser)) {
+    return NextResponse.json({ error: "仅超级管理员可管理校区" }, { status: 403 });
   }
 
   const body = await req.json();

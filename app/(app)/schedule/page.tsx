@@ -39,7 +39,7 @@ type Lesson = {
 
 type Student   = { id: string; name: string };
 type Package   = { id: string; grade: { name: string }; subject: { name: string }; remainingHours: string };
-type Classroom = { id: string; name: string };
+type Classroom = { id: string; name: string; campus: { name: string } };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getMonday(d: Date): Date {
@@ -352,7 +352,7 @@ function CreateModal({
             <select value={form.classroomId} onChange={e => setForm(f => ({ ...f, classroomId: e.target.value }))}
               className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">选择教室</option>
-              {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}（{c.campus.name}）</option>)}
             </select>
           </div>
           <div>

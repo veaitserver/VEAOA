@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageUsers } from "@/lib/permissions";
-import type { Role } from "@/lib/enums";
+import { isSuperAdmin, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({ name: z.string().min(1) });
@@ -10,8 +9,7 @@ const schema = z.object({ name: z.string().min(1) });
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = session.user as { roles: Role[]; campusIds: string[]; id: string; name: string };
-  if (!canManageUsers(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isSuperAdmin(session.user as SessionUser)) return NextResponse.json({ error: "仅超级管理员可管理校区" }, { status: 403 });
 
   const { id } = await params;
   const body = await req.json();
@@ -25,10 +23,21 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = session.user as { roles: Role[]; campusIds: string[]; id: string; name: string };
-  if (!canManageUsers(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isSuperAdmin(session.user as SessionUser)) return NextResponse.json({ error: "仅超级管理员可管理校区" }, { status: 403 });
 
   const { id } = await params;
+  // 有学生/教室/员工归属的校区不能删，避免破坏关联数据。
+  const [students, classrooms, users] = await Promise.all([
+    prisma.student.count({ where: { campusId: id } }),
+    prisma.classroom.count({ where: { campusId: id } }),
+    prisma.userCampus.count({ where: { campusId: id } }),
+  ]);
+  if (students > 0 || classrooms > 0 || users > 0) {
+    return NextResponse.json(
+      { error: `该校区仍有 ${students} 名学生 / ${classrooms} 间教室 / ${users} 名员工，无法删除` },
+      { status: 400 },
+    );
+  }
   await prisma.campus.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
