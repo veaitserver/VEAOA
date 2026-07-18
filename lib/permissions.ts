@@ -132,6 +132,11 @@ export function canViewTeacherReport(user: SessionUser | null | undefined): bool
   return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+// 营销活动由校区校长管理（导入线索的正是校长），超管全权。
+export function canManageCampaigns(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: "超级管理员",
   HR: "HR",
