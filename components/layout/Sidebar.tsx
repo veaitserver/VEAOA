@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import type { Role } from "@/lib/enums";
 import {
+  canImportLeads,
   canManageCampaigns,
   canManageUsers,
   canViewPackages,
@@ -30,6 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/reports/sales", label: "销售报表", icon: "📊", can: canViewSalesReport },
   { href: "/reports/teachers", label: "工时报表", icon: "⏱️", can: canViewTeacherReport },
   { href: "/admin/campaigns", label: "营销活动", icon: "📣", can: canManageCampaigns },
+  { href: "/admin/leads/import", label: "线索导入", icon: "📥", can: canImportLeads },
   { href: "/admin/campuses", label: "校区管理", icon: "🏫", can: canManageUsers },
   { href: "/admin/users", label: "用户管理", icon: "👥", can: canManageUsers },
 ];

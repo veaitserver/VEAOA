@@ -137,6 +137,11 @@ export function canManageCampaigns(user: SessionUser | null | undefined): boolea
   return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
+// CSV 批量导入线索：由校区校长操作，校区取自校长（多校区时前端弹选）。
+export function canImportLeads(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: "超级管理员",
   HR: "HR",
