@@ -44,6 +44,11 @@ export function normalizePhone(raw: string | null | undefined): string {
   return digits;
 }
 
+/** 规范化后是否为合法加拿大/北美手机号（10 位，NANP）。 */
+export function isValidPhone(normalized: string): boolean {
+  return /^\d{10}$/.test(normalized);
+}
+
 /** 联系 App 账号（微信号/小红书号）：去空格横杠、转小写，便于宽松去重。 */
 export function normalizeAppId(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -107,11 +112,31 @@ async function followUpAuthor(campusId: string, ownerId: string | null, actorId:
   return uc?.userId ?? actorId ?? null;
 }
 
+/**
+ * 年级容错匹配：
+ * - 数字年级接受 "9" / "G9" / "Grade9" / "Grade 9" / "9年级"（忽略大小写）→ Grade 9
+ * - 命名年级（AP Calculus / IB Physics HL / SAT Math 等）需写全称，忽略大小写匹配
+ * 匹配不到返回 null（年级留空，不算导入失败）。
+ */
 async function resolveGradeId(name: string | null | undefined): Promise<string | null> {
   const n = name?.trim();
   if (!n) return null;
-  const g = await prisma.grade.findFirst({ where: { name: n }, select: { id: true } });
-  return g?.id ?? null;
+  const grades = await prisma.grade.findMany({ select: { id: true, name: true } });
+  const lower = n.toLowerCase();
+
+  // 1) 忽略大小写精确匹配（覆盖 "Grade 9" 与命名年级）
+  const exact = grades.find((g) => g.name.toLowerCase() === lower);
+  if (exact) return exact.id;
+
+  // 2) 数字年级容错：从 "9" / "g9" / "grade9" / "9年级" 里取数字，映射到 "Grade N"
+  const digits = lower.match(/\d{1,2}/)?.[0];
+  const looksNumericGrade = digits && (lower === digits || /^g\s*\d/.test(lower) || /^grade/.test(lower) || lower.includes("年级"));
+  if (looksNumericGrade) {
+    const target = `grade ${digits}`;
+    const byNumber = grades.find((g) => g.name.toLowerCase() === target);
+    if (byNumber) return byNumber.id;
+  }
+  return null;
 }
 
 async function logImport(
@@ -155,7 +180,9 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
     if (!sourceCategory || !sourceDetail) return reject("缺少必填字段：source_category / source_detail");
 
     const normPhone = normalizePhone(input.phone);
-    if (!normPhone) return reject("电话号码无效");
+    if (!isValidPhone(normPhone)) {
+      return reject("电话号码格式不正确：需为 10 位加拿大手机号（可含 +1、空格、横杠、括号）");
+    }
     const normAppId = normalizeAppId(input.contactAppId);
 
     // 去重：电话 或 联系App账号 命中即视为同一线索。

@@ -29,15 +29,15 @@ const TEMPLATE_EXAMPLES: Record<string, string>[] = [
 // 字段格式说明行：首格以 # 开头，导入时被解析器自动忽略（不会建成线索）。
 const TEMPLATE_HINT: Record<string, string> = {
   parent_name: "# 家长姓名 必填",
-  phone: "必填 加拿大手机号",
+  phone: "必填 10位手机号(可带+1/空格/横杠)",
   preferred_contact_app: "PHONE/WECHAT/XIAOHONGSHU/WHATSAPP/OTHER",
   contact_app_id: "微信/小红书号 选填",
-  grade: "系统年级名如Grade 9 选填",
+  grade: "9或G9或Grade 9均可;AP/IB/SAT写全称;选填",
   subjects_of_interest: "选填 逗号分隔",
-  source_category: "OFFLINE_EVENT/ONLINE_CHANNEL/REFERRAL/OTHER",
-  source_detail: "来源明细如Markham数学展",
-  postal_code: "加拿大邮编如L3T 7P9",
-  campaign_token: "活动token 选填(填了来源随活动)",
+  source_category: "来源大类 OFFLINE_EVENT线下/ONLINE_CHANNEL线上/REFERRAL转介绍/OTHER其他",
+  source_detail: "来源明细(自由填) 如Markham数学展/小红书",
+  postal_code: "加拿大邮编如L3T 7P9 选填",
+  campaign_token: "营销活动编码 选填(填了则校区/来源随活动)",
 };
 
 function csvCell(v: string): string {
@@ -126,24 +126,20 @@ export default function LeadCsvImportPage() {
           ⬇ 下载 CSV 模板
         </button>
       </div>
-      <div className="text-sm text-slate-500 space-y-1">
+      <div className="text-sm text-slate-500 space-y-2">
         <p>
           CSV 列（首行表头）：<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">{EXPECTED_COLUMNS.join(", ")}</code>。
+          模板表头下第一行是 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">#</code> 字段说明（上传时自动忽略，可保留）；其余为示例行，请替换或删除。校区由上方选择决定，不用写进 CSV。
         </p>
-        <p>
-          必填 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">parent_name</code>、
-          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">phone</code>；
-          来源用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category/source_detail</code> 列，
-          或用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">campaign_token</code>（则来源随活动，前两列可留空）。
-        </p>
-        <p>
-          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">preferred_contact_app</code> 取值：
-          PHONE / WECHAT / XIAOHONGSHU / WHATSAPP / OTHER；
-          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category</code> 取值：
-          OFFLINE_EVENT / ONLINE_CHANNEL / REFERRAL / OTHER。
-          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">grade</code> 需与系统年级名一致（如 Grade 9），否则留空。
-          校区由上方选择决定，无需在 CSV 里填。模板表头下第一行是 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">#</code> 字段说明（上传时自动忽略，可保留）；其余为示例行，请替换或删除。
-        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li><b>parent_name</b>（必填）家长姓名。</li>
+          <li><b>phone</b>（必填）10 位加拿大手机号；可带 +1、空格、横杠、括号，如 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">647-555-0199</code>、<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">+1 (647) 555 0199</code>，系统自动规范化。不是 10 位会被拒。</li>
+          <li><b>preferred_contact_app / contact_app_id</b>（选填）偏好联系方式与账号：PHONE / WECHAT / XIAOHONGSHU / WHATSAPP / OTHER，以及对应的微信号/小红书号。</li>
+          <li><b>grade</b>（选填）数字年级写 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">9</code>、<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">G9</code> 或 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">Grade 9</code> 都行；AP/IB/SAT 需写全称（如 AP Calculus）。识别不了就留空，不影响导入。</li>
+          <li><b>source_category / source_detail</b>（来源）<b>大类</b> + <b>明细</b>。大类取值：OFFLINE_EVENT（线下活动）/ ONLINE_CHANNEL（线上渠道）/ REFERRAL（转介绍）/ OTHER（其他）；明细自由填，如「Markham 数学展」「小红书」。</li>
+          <li><b>campaign_token</b>（选填）「营销活动」里某个活动的编码。<b>填了它就不用填来源和校区</b>——系统自动取该活动的来源与校区（在 营销活动 页每个活动详情里可复制）。没建活动就留空、改填上面两列来源。</li>
+          <li><b>postal_code</b>（选填）加拿大邮编，如 L3T 7P9，用于按区域（FSA）统计。</li>
+        </ul>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
