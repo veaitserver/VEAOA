@@ -25,7 +25,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       grade: true,
       campus: true,
       sales: { select: { id: true, name: true } },
-      leadInfo: true,
+      leadInfo: { include: { campaign: { select: { name: true } } } },
       followUps: {
         include: { sales: { select: { name: true } } },
         orderBy: { followedAt: "desc" },

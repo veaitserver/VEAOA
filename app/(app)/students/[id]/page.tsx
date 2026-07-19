@@ -4,14 +4,20 @@ import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from "@/lib/utils";
+import {
+  sourceCategoryLabel, leadStatusLabel, CONTACT_APP_LABELS, type LeadInfo,
+} from "@/lib/leadLabels";
 
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
   isEnrolled?: boolean;
+  postalCode?: string | null;
+  preferredContactApp?: string | null;
+  contactAppId?: string | null;
   grade: { id: string; name: string } | null;
   campus: { name: string };
   sales: { id: string; name: string } | null;
-  leadInfo: { source: string } | null;
+  leadInfo: (LeadInfo & { source: string }) | null;
   followUps: FollowUp[];
   packages: Package[];
   lessons: Lesson[];
@@ -44,9 +50,6 @@ const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",
   ACTIVE: "bg-green-100 text-green-700",
   FINANCE_LOCK: "bg-red-100 text-red-700",
-};
-const LEAD_SOURCES: Record<string, string> = {
-  OUTREACH: "地推", REFERRAL: "转介绍", AD: "广告", OTHER: "其他",
 };
 
 export default function StudentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -91,8 +94,13 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex items-center gap-3">
         <Link href="/students" className="text-slate-400 hover:text-slate-600 text-lg">←</Link>
         <h1 className="text-2xl font-bold text-slate-800">{student.name}</h1>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${activePackages.length > 0 ? "bg-green-100 text-green-700" : "bg-indigo-100 text-indigo-700"}`}>
-          {activePackages.length > 0 ? "在读" : "线索"}
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+          activePackages.length > 0 ? "bg-green-100 text-green-700"
+            : student.leadInfo?.status === "LOST" ? "bg-slate-100 text-slate-500"
+            : student.leadInfo?.status === "CONTACTED" ? "bg-amber-100 text-amber-700"
+            : "bg-indigo-100 text-indigo-700"
+        }`}>
+          {leadStatusLabel(activePackages.length > 0, student.leadInfo)}
         </span>
       </div>
 
@@ -111,11 +119,19 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
           <div className="grid grid-cols-2 gap-4">
             {[
               ["手机号", formatPhone(student.phone)],
+              ["联系方式", student.preferredContactApp
+                ? `${CONTACT_APP_LABELS[student.preferredContactApp] ?? student.preferredContactApp}${student.contactAppId ? " · " + student.contactAppId : ""}`
+                : "—"],
               ["年级", student.grade?.name ?? "待定"],
               ["校区", student.campus.name],
-              ["公立学校", student.publicSchool || "—"],
+              ["邮编", student.postalCode || "—"],
               ["归属销售", student.sales?.name || "—"],
-              ["线索来源", student.leadInfo ? LEAD_SOURCES[student.leadInfo.source] : "—"],
+              ["线索状态", leadStatusLabel(activePackages.length > 0, student.leadInfo)],
+              ["来源大类", sourceCategoryLabel(student.leadInfo)],
+              ["来源明细", student.leadInfo?.sourceDetail || "—"],
+              ["营销活动", student.leadInfo?.campaign?.name || "—"],
+              ["意向科目", student.leadInfo?.subjectsOfInterest || "—"],
+              ["公立学校", student.publicSchool || "—"],
               ["注册时间", formatDate(student.createdAt)],
             ].map(([label, value]) => (
               <div key={label}>
