@@ -16,7 +16,7 @@ type Report = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  NEW: "新线索", CONTACTED: "已联系", LOST: "已流失", ENROLLED: "已转化",
+  NEW: "新线索", CONTACTED: "已联系", LOST: "已流失", ENROLLED: "在读", COMPLETED: "已结课",
 };
 
 export default function CampaignDetailPage({ params }: { params: Promise<{ id: string }> }) {

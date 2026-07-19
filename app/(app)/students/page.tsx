@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
-import { sourceShort, leadStatusLabel, type LeadInfo } from "@/lib/leadLabels";
+import { sourceShort, stageLabel, STAGE_COLORS, type LeadInfo } from "@/lib/leadLabels";
 
 type Student = {
-  id: string; name: string; phone: string; isEnrolled: boolean;
+  id: string; name: string; phone: string; stage: string;
   grade: { name: string } | null; campus: { name: string };
   sales: { name: string } | null;
   leadInfo: (LeadInfo & { source: string }) | null;
@@ -79,13 +79,8 @@ export default function StudentsPage() {
                   {sourceShort(s.leadInfo)}
                 </td>
                 <td className="px-6 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    s.isEnrolled ? "bg-green-100 text-green-700"
-                      : s.leadInfo?.status === "LOST" ? "bg-slate-100 text-slate-500"
-                      : s.leadInfo?.status === "CONTACTED" ? "bg-amber-100 text-amber-700"
-                      : "bg-indigo-100 text-indigo-700"
-                  }`}>
-                    {leadStatusLabel(s.isEnrolled, s.leadInfo)}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STAGE_COLORS[s.stage] ?? "bg-slate-100 text-slate-500"}`}>
+                    {stageLabel(s.stage)}
                   </span>
                 </td>
                 <td className="px-6 py-3 text-right">

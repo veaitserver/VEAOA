@@ -21,6 +21,21 @@ export const LEAD_STATUS_LABELS: Record<string, string> = {
   NEW: "新线索", CONTACTED: "已联系", LOST: "已流失",
 };
 
+// 学员完整生命周期：漏斗三态（派生自 leadInfo.status）+ 由课包派生的在读/已结课。
+export const STAGE_LABELS: Record<string, string> = {
+  NEW: "新线索", CONTACTED: "已联系", LOST: "已流失",
+  ENROLLED: "在读", COMPLETED: "已结课",
+};
+export const STAGE_COLORS: Record<string, string> = {
+  NEW: "bg-indigo-100 text-indigo-700",
+  CONTACTED: "bg-amber-100 text-amber-700",
+  LOST: "bg-slate-100 text-slate-500",
+  ENROLLED: "bg-green-100 text-green-700",
+  COMPLETED: "bg-sky-100 text-sky-700",
+};
+/** 是否漏斗态（纯线索，可标记流失/激活）。 */
+export const FUNNEL_STAGES = ["NEW", "CONTACTED", "LOST"] as const;
+
 export type LeadInfo = {
   source: string;
   status?: string;
@@ -29,6 +44,27 @@ export type LeadInfo = {
   subjectsOfInterest?: string | null;
   campaign?: { name: string } | null;
 } | null | undefined;
+
+export type PackageLite = { status: string; remainingHours: number | string };
+
+/**
+ * 学员当前阶段（唯一判定，业务流不变）：
+ * - 有生效课包(ACTIVE 且剩余>0) → 在读（在读优先，不会同时是已流失）
+ * - 曾开过课包但现在没有生效的(全部消耗完/FINANCE_LOCK) → 已结课
+ * - 从没确认过课包 → 纯线索，用漏斗状态 NEW/CONTACTED/LOST
+ */
+export function deriveStage(packages: PackageLite[] | undefined, lead: LeadInfo): string {
+  const pkgs = packages ?? [];
+  const hasActive = pkgs.some((p) => p.status === "ACTIVE" && Number(p.remainingHours) > 0);
+  if (hasActive) return "ENROLLED";
+  const hadConfirmed = pkgs.some((p) => p.status === "ACTIVE" || p.status === "FINANCE_LOCK");
+  if (hadConfirmed) return "COMPLETED";
+  return lead?.status ?? "NEW";
+}
+
+export function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
 
 /** 来源大类的中文名（详情页用）。 */
 export function sourceCategoryLabel(lead: LeadInfo): string {

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from "@/lib/utils";
 import {
-  sourceCategoryLabel, leadStatusLabel, CONTACT_APP_LABELS, type LeadInfo,
+  sourceCategoryLabel, deriveStage, stageLabel, STAGE_COLORS, FUNNEL_STAGES, CONTACT_APP_LABELS, type LeadInfo,
 } from "@/lib/leadLabels";
 
 type Student = {
@@ -90,6 +90,8 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   if (!student) return <div className="text-slate-400 text-sm p-8 text-center">加载中...</div>;
 
   const activePackages = student.packages.filter(p => p.status === "ACTIVE");
+  const stage = deriveStage(student.packages, student.leadInfo);
+  const isFunnel = FUNNEL_STAGES.includes(stage as typeof FUNNEL_STAGES[number]);
   const scheduledHours = student.lessons
     .filter(l => !l.log?.deduction)
     .reduce((sum, l) => {
@@ -102,13 +104,8 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex items-center gap-3">
         <Link href="/students" className="text-slate-400 hover:text-slate-600 text-lg">←</Link>
         <h1 className="text-2xl font-bold text-slate-800">{student.name}</h1>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          activePackages.length > 0 ? "bg-green-100 text-green-700"
-            : student.leadInfo?.status === "LOST" ? "bg-slate-100 text-slate-500"
-            : student.leadInfo?.status === "CONTACTED" ? "bg-amber-100 text-amber-700"
-            : "bg-indigo-100 text-indigo-700"
-        }`}>
-          {leadStatusLabel(activePackages.length > 0, student.leadInfo)}
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STAGE_COLORS[stage] ?? "bg-slate-100 text-slate-500"}`}>
+          {stageLabel(stage)}
         </span>
       </div>
 
@@ -134,7 +131,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               ["校区", student.campus.name],
               ["邮编", student.postalCode || "—"],
               ["归属销售", student.sales?.name || "—"],
-              ["线索状态", leadStatusLabel(activePackages.length > 0, student.leadInfo)],
+              ["学员状态", stageLabel(stage)],
               ["来源大类", sourceCategoryLabel(student.leadInfo)],
               ["来源明细", student.leadInfo?.sourceDetail || "—"],
               ["营销活动", student.leadInfo?.campaign?.name || "—"],
@@ -152,9 +149,9 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
             <Link href={`/packages/new?studentId=${student.id}`} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 inline-block">
               + 新建课包
             </Link>
-            {/* 线索漏斗状态操作：仅未转化的线索显示 */}
-            {activePackages.length === 0 && student.leadInfo && (
-              student.leadInfo.status === "LOST" ? (
+            {/* 线索漏斗状态操作：仅纯线索显示（已结课/在读不显示） */}
+            {isFunnel && student.leadInfo && (
+              stage === "LOST" ? (
                 <button onClick={() => updateLeadStatus("CONTACTED")}
                   className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50">
                   重新激活

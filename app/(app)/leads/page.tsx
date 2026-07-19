@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
-import { sourceShort, leadStatusLabel, CONTACT_APP_LABELS, type LeadInfo } from "@/lib/leadLabels";
+import { sourceShort, stageLabel, STAGE_COLORS, CONTACT_APP_LABELS, type LeadInfo } from "@/lib/leadLabels";
 
 type Lead = {
-  id: string; name: string; phone: string; isEnrolled: boolean;
+  id: string; name: string; phone: string; stage: string;
   grade: { name: string } | null; campus: { name: string };
   sales: { name: string } | null;
   preferredContactApp?: string | null; contactAppId?: string | null;
@@ -36,7 +36,7 @@ export default function LeadsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const visible = leads.filter((l) => statusTab === "all" || (l.leadInfo?.status ?? "NEW") === statusTab);
+  const visible = leads.filter((l) => statusTab === "all" || l.stage === statusTab);
 
   return (
     <div className="space-y-6">
@@ -94,12 +94,8 @@ export default function LeadsPage() {
                 <td className="px-6 py-3 text-sm text-slate-500">{l.sales?.name ?? "—"}</td>
                 <td className="px-6 py-3 text-sm text-slate-500">{sourceShort(l.leadInfo)}</td>
                 <td className="px-6 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    l.leadInfo?.status === "LOST" ? "bg-slate-100 text-slate-500"
-                      : l.leadInfo?.status === "CONTACTED" ? "bg-amber-100 text-amber-700"
-                      : "bg-indigo-100 text-indigo-700"
-                  }`}>
-                    {leadStatusLabel(false, l.leadInfo)}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STAGE_COLORS[l.stage] ?? "bg-slate-100 text-slate-500"}`}>
+                    {stageLabel(l.stage)}
                   </span>
                 </td>
                 <td className="px-6 py-3 text-right">

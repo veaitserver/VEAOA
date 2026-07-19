@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canManageCampaigns, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { fsa } from "@/lib/leadImport";
+import { deriveStage } from "@/lib/leadLabels";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -25,21 +26,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       student: {
         select: {
           postalCode: true,
-          // 转化的判定与全局一致：有生效(ACTIVE)课包即视为在读。业务流不变。
-          packages: { where: { status: "ACTIVE" }, select: { id: true } },
+          // 取全部课包以派生阶段（在读/已结课都算已转化）。业务流不变。
+          packages: { select: { status: true, remainingHours: true } },
         },
       },
     },
   });
 
   const captured = leads.length;
-  const enrolled = leads.filter((l) => l.student.packages.length > 0).length;
+  const stageOf = (l: (typeof leads)[number]) => deriveStage(l.student.packages, { source: "", status: l.status });
+  // 转化 = 已成为学生（在读或已结课）
+  const enrolled = leads.filter((l) => ["ENROLLED", "COMPLETED"].includes(stageOf(l))).length;
 
-  const byStatus: Record<string, number> = { NEW: 0, CONTACTED: 0, LOST: 0, ENROLLED: 0 };
+  const byStatus: Record<string, number> = { NEW: 0, CONTACTED: 0, LOST: 0, ENROLLED: 0, COMPLETED: 0 };
   const byFsa: Record<string, number> = {};
   for (const l of leads) {
-    const isEnrolled = l.student.packages.length > 0;
-    byStatus[isEnrolled ? "ENROLLED" : l.status] = (byStatus[isEnrolled ? "ENROLLED" : l.status] ?? 0) + 1;
+    const st = stageOf(l);
+    byStatus[st] = (byStatus[st] ?? 0) + 1;
     const region = fsa(l.student.postalCode) ?? "未知";
     byFsa[region] = (byFsa[region] ?? 0) + 1;
   }

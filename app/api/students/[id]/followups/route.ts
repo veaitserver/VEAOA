@@ -71,5 +71,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     include: { sales: { select: { name: true } } },
   });
 
+  // 曾流失的线索一旦有新跟进 → 拉回「已联系」，不再算流失。
+  await prisma.lead.updateMany({
+    where: { studentId: id, status: "LOST" },
+    data: { status: "CONTACTED" },
+  });
+
   return NextResponse.json(followUp, { status: 201 });
 }

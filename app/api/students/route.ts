@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canManageStudents, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { normalizePhone, isValidPhone, normalizeAppId } from "@/lib/leadImport";
+import { deriveStage, FUNNEL_STAGES } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
 import { z } from "zod";
 
@@ -48,20 +49,19 @@ export async function GET(req: Request) {
       campus: true,
       sales: { select: { id: true, name: true } },
       leadInfo: true,
-      packages: {
-        where: { status: "ACTIVE" },
-        select: { id: true, remainingHours: true, status: true },
-      },
+      // 取全部课包用于派生阶段（在读/已结课），不只 ACTIVE。
+      packages: { select: { remainingHours: true, status: true } },
     },
     orderBy: { createdAt: "desc" },
   });
 
-  const enriched = students.map(s => ({
-    ...s,
-    isEnrolled: s.packages.length > 0,
-  })).filter(s => {
-    if (status === "lead") return !s.isEnrolled;
-    if (status === "enrolled") return s.isEnrolled;
+  const enriched = students.map(s => {
+    const stage = deriveStage(s.packages, s.leadInfo);
+    return { ...s, stage, isEnrolled: stage === "ENROLLED" };
+  }).filter(s => {
+    // 线索客户 = 纯线索（漏斗态）；学生 = 已开过课包（在读/已结课）
+    if (status === "lead") return FUNNEL_STAGES.includes(s.stage as typeof FUNNEL_STAGES[number]);
+    if (status === "enrolled") return s.stage === "ENROLLED" || s.stage === "COMPLETED";
     return true;
   });
 
