@@ -2,15 +2,24 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canManageStudents, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { normalizeAppId } from "@/lib/leadImport";
+import { SourceCategory, LeadStatus } from "@/lib/enums";
 import { z } from "zod";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
-  gradeId: z.string().optional(),
-  publicSchool: z.string().optional(),
-  salesId: z.string().optional(),
+  gradeId: z.string().nullable().optional(),
+  publicSchool: z.string().nullable().optional(),
+  salesId: z.string().nullable().optional(),
   campusId: z.string().optional(),
-  leadSource: z.enum(["OUTREACH", "REFERRAL", "AD", "OTHER"]).optional(),
+  postalCode: z.string().nullable().optional(),
+  preferredContactApp: z.string().nullable().optional(),
+  contactAppId: z.string().nullable().optional(),
+  // 线索来源与状态（销售可从线索里补销售信息、推进漏斗状态）
+  sourceCategory: z.nativeEnum(SourceCategory).nullable().optional(),
+  sourceDetail: z.string().nullable().optional(),
+  subjectsOfInterest: z.string().nullable().optional(),
+  status: z.nativeEnum(LeadStatus).optional(),
 });
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -80,7 +89,11 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
-  const { leadSource, salesId, ...rest } = parsed.data;
+  const {
+    salesId, contactAppId, postalCode, preferredContactApp,
+    sourceCategory, sourceDetail, subjectsOfInterest, status,
+    ...rest
+  } = parsed.data;
 
   const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -96,14 +109,25 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   await prisma.student.update({
     where: { id },
-    data: { ...rest, salesId: salesId ?? undefined },
+    data: {
+      ...rest,
+      salesId: salesId ?? undefined,
+      ...(postalCode !== undefined ? { postalCode: postalCode?.trim() || null } : {}),
+      ...(preferredContactApp !== undefined ? { preferredContactApp: preferredContactApp || null } : {}),
+      ...(contactAppId !== undefined ? { contactAppId: normalizeAppId(contactAppId) } : {}),
+    },
   });
 
-  if (leadSource) {
-    await prisma.lead.upsert({
+  // 线索来源/状态更新（该学生已有 Lead 记录才更新）
+  if (sourceCategory !== undefined || sourceDetail !== undefined || subjectsOfInterest !== undefined || status !== undefined) {
+    await prisma.lead.updateMany({
       where: { studentId: id },
-      create: { studentId: id, source: leadSource },
-      update: { source: leadSource },
+      data: {
+        ...(sourceCategory !== undefined ? { source: sourceCategory ?? "OTHER", sourceCategory: sourceCategory ?? null } : {}),
+        ...(sourceDetail !== undefined ? { sourceDetail: sourceDetail?.trim() || null } : {}),
+        ...(subjectsOfInterest !== undefined ? { subjectsOfInterest: subjectsOfInterest?.trim() || null } : {}),
+        ...(status !== undefined ? { status } : {}),
+      },
     });
   }
 

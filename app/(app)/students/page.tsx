@@ -15,19 +15,18 @@ type Student = {
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
-  const [tab, setTab] = useState<"all" | "lead" | "enrolled">("all");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // 学生管理只看已转化的在读学生；未转化的线索在「线索客户管理」。
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ status: "enrolled" });
     if (search) params.set("search", search);
-    if (tab !== "all") params.set("status", tab);
     const res = await fetch(`/api/students?${params}`);
     if (res.ok) setStudents(await res.json());
     setLoading(false);
-  }, [search, tab]);
+  }, [search]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -35,19 +34,7 @@ export default function StudentsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-800">学生管理</h1>
-        <Link href="/students/new" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-          + 添加学生
-        </Link>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-        {([["all", "全部"], ["lead", "线索学生"], ["enrolled", "在读学生"]] as const).map(([val, label]) => (
-          <button key={val} onClick={() => setTab(val)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${tab === val ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-            {label}
-          </button>
-        ))}
+        <Link href="/leads" className="text-sm text-blue-600 hover:underline">线索客户管理 →</Link>
       </div>
 
       {/* Search */}
