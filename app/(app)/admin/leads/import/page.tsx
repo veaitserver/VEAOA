@@ -12,6 +12,40 @@ const EXPECTED_COLUMNS = [
   "postal_code", "campaign_token",
 ];
 
+// 模板示例行：演示合法取值，上传前请替换为真实数据（或删除这两行）。
+const TEMPLATE_EXAMPLES: Record<string, string>[] = [
+  {
+    parent_name: "张三", phone: "647-000-0001", preferred_contact_app: "WECHAT", contact_app_id: "zhangsan_wx",
+    grade: "Grade 9", subjects_of_interest: "数学, 物理", source_category: "OFFLINE_EVENT",
+    source_detail: "Markham 数学展", postal_code: "L3T 7P9", campaign_token: "",
+  },
+  {
+    parent_name: "李四", phone: "+1 905-000-0002", preferred_contact_app: "XIAOHONGSHU", contact_app_id: "lisi_xhs",
+    grade: "Grade 11", subjects_of_interest: "化学", source_category: "", source_detail: "",
+    postal_code: "L4B 2C3", campaign_token: "mkm-expo-2026",
+  },
+];
+
+function csvCell(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function downloadTemplate() {
+  const header = EXPECTED_COLUMNS.join(",");
+  const lines = TEMPLATE_EXAMPLES.map((r) => EXPECTED_COLUMNS.map((c) => csvCell(r[c] ?? "")).join(","));
+  // 加 UTF-8 BOM + CRLF，Excel 打开中文不乱码。
+  const content = "﻿" + [header, ...lines].join("\r\n") + "\r\n";
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "线索导入模板.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function LeadCsvImportPage() {
   const [campuses, setCampuses] = useState<Campus[]>([]);
   const [campusId, setCampusId] = useState("");
@@ -70,14 +104,32 @@ export default function LeadCsvImportPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <h1 className="text-2xl font-bold text-slate-800">线索 CSV 导入</h1>
-      <p className="text-sm text-slate-500">
-        CSV 列（首行表头）：<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">{EXPECTED_COLUMNS.join(", ")}</code>。
-        <br />必填 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">parent_name</code>、
-        <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">phone</code>；
-        来源可用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category/source_detail</code> 列，
-        或用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">campaign_token</code> 列（则来源随活动）。
-      </p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-slate-800">线索 CSV 导入</h1>
+        <button onClick={downloadTemplate}
+          className="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-200">
+          ⬇ 下载 CSV 模板
+        </button>
+      </div>
+      <div className="text-sm text-slate-500 space-y-1">
+        <p>
+          CSV 列（首行表头）：<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">{EXPECTED_COLUMNS.join(", ")}</code>。
+        </p>
+        <p>
+          必填 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">parent_name</code>、
+          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">phone</code>；
+          来源用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category/source_detail</code> 列，
+          或用 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">campaign_token</code>（则来源随活动，前两列可留空）。
+        </p>
+        <p>
+          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">preferred_contact_app</code> 取值：
+          PHONE / WECHAT / XIAOHONGSHU / WHATSAPP / OTHER；
+          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category</code> 取值：
+          OFFLINE_EVENT / ONLINE_CHANNEL / REFERRAL / OTHER。
+          <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">grade</code> 需与系统年级名一致（如 Grade 9），否则留空。
+          校区由上方选择决定，无需在 CSV 里填。模板含 2 行示例，上传前请替换或删除。
+        </p>
+      </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
         {/* 多校区校长：必须先选导入到哪个校区 */}
