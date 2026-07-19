@@ -79,6 +79,14 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
     load();
   }
 
+  async function updateLeadStatus(status: string) {
+    await fetch(`/api/students/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    load();
+  }
+
   if (!student) return <div className="text-slate-400 text-sm p-8 text-center">加载中...</div>;
 
   const activePackages = student.packages.filter(p => p.status === "ACTIVE");
@@ -140,10 +148,24 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               </div>
             ))}
           </div>
-          <div className="pt-2">
+          <div className="pt-2 flex items-center gap-3">
             <Link href={`/packages/new?studentId=${student.id}`} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 inline-block">
               + 新建课包
             </Link>
+            {/* 线索漏斗状态操作：仅未转化的线索显示 */}
+            {activePackages.length === 0 && student.leadInfo && (
+              student.leadInfo.status === "LOST" ? (
+                <button onClick={() => updateLeadStatus("CONTACTED")}
+                  className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50">
+                  重新激活
+                </button>
+              ) : (
+                <button onClick={() => updateLeadStatus("LOST")}
+                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50">
+                  标记为已流失
+                </button>
+              )
+            )}
           </div>
         </div>
       )}
