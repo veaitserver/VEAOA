@@ -26,15 +26,30 @@ const TEMPLATE_EXAMPLES: Record<string, string>[] = [
   },
 ];
 
+// 字段格式说明行：首格以 # 开头，导入时被解析器自动忽略（不会建成线索）。
+const TEMPLATE_HINT: Record<string, string> = {
+  parent_name: "# 家长姓名 必填",
+  phone: "必填 加拿大手机号",
+  preferred_contact_app: "PHONE/WECHAT/XIAOHONGSHU/WHATSAPP/OTHER",
+  contact_app_id: "微信/小红书号 选填",
+  grade: "系统年级名如Grade 9 选填",
+  subjects_of_interest: "选填 逗号分隔",
+  source_category: "OFFLINE_EVENT/ONLINE_CHANNEL/REFERRAL/OTHER",
+  source_detail: "来源明细如Markham数学展",
+  postal_code: "加拿大邮编如L3T 7P9",
+  campaign_token: "活动token 选填(填了来源随活动)",
+};
+
 function csvCell(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
 function downloadTemplate() {
   const header = EXPECTED_COLUMNS.join(",");
+  const hint = EXPECTED_COLUMNS.map((c) => csvCell(TEMPLATE_HINT[c] ?? "")).join(",");
   const lines = TEMPLATE_EXAMPLES.map((r) => EXPECTED_COLUMNS.map((c) => csvCell(r[c] ?? "")).join(","));
-  // 加 UTF-8 BOM + CRLF，Excel 打开中文不乱码。
-  const content = "﻿" + [header, ...lines].join("\r\n") + "\r\n";
+  // 加 UTF-8 BOM + CRLF，Excel 打开中文不乱码。表头下第一行为 # 字段说明。
+  const content = "﻿" + [header, hint, ...lines].join("\r\n") + "\r\n";
   const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -127,7 +142,7 @@ export default function LeadCsvImportPage() {
           <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">source_category</code> 取值：
           OFFLINE_EVENT / ONLINE_CHANNEL / REFERRAL / OTHER。
           <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">grade</code> 需与系统年级名一致（如 Grade 9），否则留空。
-          校区由上方选择决定，无需在 CSV 里填。模板含 2 行示例，上传前请替换或删除。
+          校区由上方选择决定，无需在 CSV 里填。模板表头下第一行是 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">#</code> 字段说明（上传时自动忽略，可保留）；其余为示例行，请替换或删除。
         </p>
       </div>
 

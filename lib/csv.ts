@@ -36,10 +36,14 @@ export function parseCsv(text: string): { headers: string[]; rows: Record<string
   if (nonEmpty.length === 0) return { headers: [], rows: [] };
 
   const headers = nonEmpty[0].map((h) => h.trim());
-  const rows = nonEmpty.slice(1).map((r) => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, idx) => { obj[h] = (r[idx] ?? "").trim(); });
-    return obj;
-  });
+  const rows = nonEmpty
+    .slice(1)
+    // 首格以 # 开头的行视为注释/说明行，直接忽略（模板里的字段格式说明就靠这个）。
+    .filter((r) => !(r[0] ?? "").trim().startsWith("#"))
+    .map((r) => {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, idx) => { obj[h] = (r[idx] ?? "").trim(); });
+      return obj;
+    });
   return { headers, rows };
 }
