@@ -12,7 +12,7 @@ const CONTACT_APPS = [
 
 export default function JoinForm({ token, campaignName, grades }: { token: string; campaignName: string; grades: string[] }) {
   const [form, setForm] = useState({
-    parentName: "", phone: "", preferredContactApp: "PHONE", contactAppId: "",
+    studentName: "", phone: "", preferredContactApp: "PHONE", contactAppId: "",
     grade: "", subjectsOfInterest: "", postalCode: "", website: "",
   });
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
@@ -68,8 +68,8 @@ export default function JoinForm({ token, campaignName, grades }: { token: strin
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">家长姓名 *</label>
-            <input value={form.parentName} onChange={set("parentName")} required className={inputCls} placeholder="您的称呼" />
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">学生姓名 *</label>
+            <input value={form.studentName} onChange={set("studentName")} required className={inputCls} placeholder="学生姓名" />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">手机号 *</label>

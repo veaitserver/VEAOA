@@ -55,7 +55,7 @@ Markham 校长 `6470000003 / principal123`，Markham 销售 `6470000001 / sales1
 
 ```json
 {
-  "parent_name": "张三", "phone": "+1 647-000-0000",
+  "student_name": "张三", "phone": "+1 647-000-0000",
   "preferred_contact_app": "WECHAT", "contact_app_id": "zhangsan_01",
   "grade": "Grade 9", "subjects_of_interest": "数学, 物理",
   "postal_code": "L3T 7P9",
@@ -63,7 +63,7 @@ Markham 校长 `6470000003 / principal123`，Markham 销售 `6470000001 / sales1
 }
 ```
 
-必填 `parent_name`、`phone`。带 `campaign_token` 时校区与来源随活动；否则需
+必填 `student_name`、`phone`。带 `campaign_token` 时校区与来源随活动；否则需
 `source_category`（`OFFLINE_EVENT`/`ONLINE_CHANNEL`/`REFERRAL`/`OTHER`）、
 `source_detail` 与显式 `campus`（校区 id）。返回 `CREATED`(201)/`MERGED`(200)/
 `REJECTED`(422)。
@@ -78,7 +78,7 @@ Markham 校长 `6470000003 / principal123`，Markham 销售 `6470000001 / sales1
 
 ### CSV 列
 
-首行表头：`parent_name, phone, preferred_contact_app, contact_app_id, grade,
+首行表头：`student_name, phone, preferred_contact_app, contact_app_id, grade,
 subjects_of_interest, source_category, source_detail, postal_code, campaign_token`。
 校区由导入校长选定（不在 CSV 里）。
 

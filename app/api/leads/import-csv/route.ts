@@ -9,7 +9,7 @@ import { z } from "zod";
  * 每行走与 API/公开表单相同的共享导入核心。返回逐行结果供前端显示成败。
  */
 const rowSchema = z.object({
-  parent_name: z.string().optional().nullable(),
+  student_name: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
   preferred_contact_app: z.string().optional().nullable(),
   contact_app_id: z.string().optional().nullable(),
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const input: LeadImportInput = {
-      parentName: r.parent_name ?? "",
+      studentName: r.student_name ?? "",
       phone: r.phone ?? "",
       preferredContactApp: r.preferred_contact_app ?? null,
       contactAppId: r.contact_app_id ?? null,

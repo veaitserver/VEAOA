@@ -7,7 +7,7 @@ type Campus = { id: string; name: string };
 type RowResult = { line: number; result: string; reason?: string };
 
 const EXPECTED_COLUMNS = [
-  "parent_name", "phone", "preferred_contact_app", "contact_app_id",
+  "student_name", "phone", "preferred_contact_app", "contact_app_id",
   "grade", "subjects_of_interest", "source_category", "source_detail",
   "postal_code", "campaign_token",
 ];
@@ -15,12 +15,12 @@ const EXPECTED_COLUMNS = [
 // 模板示例行：演示合法取值，上传前请替换为真实数据（或删除这两行）。
 const TEMPLATE_EXAMPLES: Record<string, string>[] = [
   {
-    parent_name: "张三", phone: "647-000-0001", preferred_contact_app: "WECHAT", contact_app_id: "zhangsan_wx",
+    student_name: "张三", phone: "647-000-0001", preferred_contact_app: "WECHAT", contact_app_id: "zhangsan_wx",
     grade: "Grade 9", subjects_of_interest: "数学, 物理", source_category: "OFFLINE_EVENT",
     source_detail: "Markham 数学展", postal_code: "L3T 7P9", campaign_token: "",
   },
   {
-    parent_name: "李四", phone: "+1 905-000-0002", preferred_contact_app: "XIAOHONGSHU", contact_app_id: "lisi_xhs",
+    student_name: "李四", phone: "+1 905-000-0002", preferred_contact_app: "XIAOHONGSHU", contact_app_id: "lisi_xhs",
     grade: "Grade 11", subjects_of_interest: "化学", source_category: "", source_detail: "",
     postal_code: "L4B 2C3", campaign_token: "mkm-expo-2026",
   },
@@ -28,7 +28,7 @@ const TEMPLATE_EXAMPLES: Record<string, string>[] = [
 
 // 字段格式说明行：首格以 # 开头，导入时被解析器自动忽略（不会建成线索）。
 const TEMPLATE_HINT: Record<string, string> = {
-  parent_name: "# 家长姓名 必填",
+  student_name: "# 学生姓名 必填",
   phone: "必填 10位手机号(可带+1/空格/横杠)",
   preferred_contact_app: "PHONE/WECHAT/XIAOHONGSHU/WHATSAPP/OTHER",
   contact_app_id: "微信/小红书号 选填",
@@ -87,8 +87,8 @@ export default function LeadCsvImportPage() {
     const text = await file.text();
     try {
       const { headers: h, rows: r } = parseCsv(text);
-      if (!h.includes("parent_name") || !h.includes("phone")) {
-        setParseError("CSV 必须包含 parent_name 和 phone 列");
+      if (!h.includes("student_name") || !h.includes("phone")) {
+        setParseError("CSV 必须包含 student_name 和 phone 列");
         setRows([]); setHeaders([]);
         return;
       }
@@ -132,7 +132,7 @@ export default function LeadCsvImportPage() {
           模板表头下第一行是 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">#</code> 字段说明（上传时自动忽略，可保留）；其余为示例行，请替换或删除。校区由上方选择决定，不用写进 CSV。
         </p>
         <ul className="list-disc pl-5 space-y-1">
-          <li><b>parent_name</b>（必填）家长姓名。</li>
+          <li><b>student_name</b>（必填）学生姓名。</li>
           <li><b>phone</b>（必填）10 位加拿大手机号；可带 +1、空格、横杠、括号，如 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">647-555-0199</code>、<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">+1 (647) 555 0199</code>，系统自动规范化。不是 10 位会被拒。</li>
           <li><b>preferred_contact_app / contact_app_id</b>（选填）偏好联系方式与账号：PHONE / WECHAT / XIAOHONGSHU / WHATSAPP / OTHER，以及对应的微信号/小红书号。</li>
           <li><b>grade</b>（选填）数字年级写 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">9</code>、<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">G9</code> 或 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">Grade 9</code> 都行；AP/IB/SAT 需写全称（如 AP Calculus）。识别不了就留空，不影响导入。</li>

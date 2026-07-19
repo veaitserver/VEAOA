@@ -13,7 +13,7 @@ import { nextFollowUpDate } from "./datetime";
 import { ImportResult } from "./enums";
 
 export type LeadImportInput = {
-  parentName: string;
+  studentName: string;
   phone: string;
   preferredContactApp?: string | null;
   contactAppId?: string | null;
@@ -159,8 +159,8 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
   };
 
   try {
-    if (!input.parentName?.trim() || !input.phone?.trim()) {
-      return reject("缺少必填字段：parent_name / phone");
+    if (!input.studentName?.trim() || !input.phone?.trim()) {
+      return reject("缺少必填字段：student_name / phone");
     }
 
     // campaign（若有）决定校区与来源，家长/表单不填这些。
@@ -210,7 +210,7 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
       const created = await prisma.$transaction(async (tx) => {
         const student = await tx.student.create({
           data: {
-            name: input.parentName.trim(),
+            name: input.studentName.trim(),
             phone: normPhone,
             gradeId,
             campusId,

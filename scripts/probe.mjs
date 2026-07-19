@@ -511,14 +511,14 @@ async function run() {
       body: JSON.stringify(body),
     }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
 
-  const noKey = await importReq(null, { parent_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
+  const noKey = await importReq(null, { student_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
   check(5, "无 API key 应 401", noKey.status === 401, `实际 ${noKey.status}`);
 
-  const badKey = await importReq("wrong-key", { parent_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
+  const badKey = await importReq("wrong-key", { student_name: "X", phone: PHONE, campaign_token: "mkm-expo-2026" });
   check(5, "错误 API key 应 401", badKey.status === 401, `实际 ${badKey.status}`);
 
   const leadCreated = await importReq(apiKey, {
-    parent_name: "Probe Parent", phone: `+1 (647) 888-0001`, grade: "Grade 9", postal_code: "L3T 7P9",
+    student_name: "Probe Parent", phone: `+1 (647) 888-0001`, grade: "Grade 9", postal_code: "L3T 7P9",
     preferred_contact_app: "WECHAT", contact_app_id: "probe_app_01", subjects_of_interest: "Math",
     campaign_token: "mkm-expo-2026",
   });
@@ -534,22 +534,22 @@ async function run() {
   check(5, "新线索获次日回访跟进", (createdStudent?.followUps.length ?? 0) === 1 && !!createdStudent?.followUps[0]?.nextFollowUp,
     `跟进数 ${createdStudent?.followUps.length}`);
 
-  const merged = await importReq(apiKey, { parent_name: "Probe Parent", phone: "647-888-0001", campaign_token: "mkm-red" });
+  const merged = await importReq(apiKey, { student_name: "Probe Parent", phone: "647-888-0001", campaign_token: "mkm-red" });
   const afterMerge = await prisma.student.findMany({ where: { phone: PHONE }, include: { followUps: true } });
   check(5, "同电话再导入应合并不新建（200 MERGED）",
     merged.status === 200 && merged.body.result === "MERGED" && afterMerge.length === 1 && afterMerge[0].followUps.length === 2,
     `实际 ${merged.status} ${merged.body.result ?? ""}，该电话学生数 ${afterMerge.length}`);
 
   await prisma.lead.update({ where: { studentId: createdStudent.id }, data: { status: "LOST" } });
-  await importReq(apiKey, { parent_name: "Probe Parent", phone: PHONE, campaign_token: "mkm-red" });
+  await importReq(apiKey, { student_name: "Probe Parent", phone: PHONE, campaign_token: "mkm-red" });
   const afterFlip = await prisma.lead.findUnique({ where: { studentId: createdStudent.id } });
   check(5, "流失线索重新触达应翻回 CONTACTED", afterFlip?.status === "CONTACTED", `实际 ${afterFlip?.status}`);
 
-  const noCampus = await importReq(apiKey, { parent_name: "No Campus", phone: "6478889999", source_category: "OTHER", source_detail: "x" });
+  const noCampus = await importReq(apiKey, { student_name: "No Campus", phone: "6478889999", source_category: "OTHER", source_detail: "x" });
   check(5, "无 campaign 且无显式校区应 422 拒绝", noCampus.status === 422, `实际 ${noCampus.status}`);
 
   const appDedup = await importReq(apiKey, {
-    parent_name: "Probe Parent Alt", phone: `+1 647-888-0002`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
+    student_name: "Probe Parent Alt", phone: `+1 647-888-0002`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
   });
   const appDupCount = await prisma.student.count({ where: { phone: PHONE_APP } });
   check(5, "相同联系App账号应合并（不同电话也去重）",

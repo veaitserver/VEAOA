@@ -10,7 +10,7 @@ import { z } from "zod";
  * 显式 campus（校区 id）。两者都无则拒绝。去重/分配/合并全部走 lib/leadImport。
  */
 const payloadSchema = z.object({
-  parent_name: z.string().min(1),
+  student_name: z.string().min(1),
   phone: z.string().min(1),
   preferred_contact_app: z.string().optional().nullable(),
   contact_app_id: z.string().optional().nullable(),
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   const p = parsed.data;
 
   const input: LeadImportInput = {
-    parentName: p.parent_name,
+    studentName: p.student_name,
     phone: p.phone,
     preferredContactApp: p.preferred_contact_app ?? null,
     contactAppId: p.contact_app_id ?? null,

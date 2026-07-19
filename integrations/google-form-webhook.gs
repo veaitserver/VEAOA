@@ -53,7 +53,7 @@ var CONFIG = {
 
 // 表单问题标题 → API payload 字段（snake_case）。左边按你的表单实际问题标题改。
 var QUESTION_MAP = {
-  "家长姓名": "parent_name",
+  "学生姓名": "student_name",
   "手机号": "phone",
   "联系方式": "preferred_contact_app",   // 值建议：PHONE / WECHAT / XIAOHONGSHU / WHATSAPP / OTHER
   "微信号/账号": "contact_app_id",

@@ -9,7 +9,7 @@ import { z } from "zod";
  */
 const schema = z.object({
   token: z.string().min(1),
-  parentName: z.string().min(1),
+  studentName: z.string().min(1),
   phone: z.string().min(1),
   preferredContactApp: z.string().optional().nullable(),
   contactAppId: z.string().optional().nullable(),
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   }
 
   const input: LeadImportInput = {
-    parentName: d.parentName,
+    studentName: d.studentName,
     phone: d.phone,
     preferredContactApp: d.preferredContactApp ?? null,
     contactAppId: d.contactAppId ?? null,
