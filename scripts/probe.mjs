@@ -557,6 +557,57 @@ async function run() {
     `实际 ${appDedup.body.result ?? appDedup.status}，PHONE_APP 学生数(应为0) ${appDupCount}`);
 
   await cleanupLeads();
+
+  // ── 阶段 6：线索归属隔离 ────────────────────────────────────────────────
+  console.log("\n阶段 6 — 线索归属隔离");
+  const probeSalesPhone = "6477770003";
+  const leadPhones = ["6477770001", "6477770002"];
+  const cleanupOwner = async () => {
+    await prisma.student.deleteMany({ where: { phone: { in: leadPhones } } });
+    const ps = await prisma.user.findUnique({ where: { phone: probeSalesPhone } });
+    if (ps) {
+      await prisma.userRole.deleteMany({ where: { userId: ps.id } });
+      await prisma.userCampus.deleteMany({ where: { userId: ps.id } });
+    }
+  };
+  await cleanupOwner();
+
+  const probeSales = await prisma.user.upsert({
+    where: { phone: probeSalesPhone },
+    update: { passwordHash: await bcrypt.hash("probesales123", 12), isActive: true },
+    create: { name: "Probe Sales MKM", phone: probeSalesPhone, passwordHash: await bcrypt.hash("probesales123", 12) },
+  });
+  await prisma.userRole.create({ data: { userId: probeSales.id, role: "SALES" } });
+  await prisma.userCampus.create({ data: { userId: probeSales.id, campusId: "campus-markham" } });
+  const sarahId = "user-sales-mkm";
+  const leadSarah = await prisma.student.create({
+    data: { name: "归属-Sarah", phone: leadPhones[0], campusId: "campus-markham", salesId: sarahId, leadInfo: { create: { source: "OTHER", status: "NEW" } } },
+  });
+  const leadProbe = await prisma.student.create({
+    data: { name: "归属-Probe", phone: leadPhones[1], campusId: "campus-markham", salesId: probeSales.id, leadInfo: { create: { source: "OTHER", status: "NEW" } } },
+  });
+
+  const listSarah = await mkmSales.req("GET", "/api/students?status=lead");
+  const sarahIds = (Array.isArray(listSarah.body) ? listSarah.body : []).map((s) => s.id);
+  check(6, "销售列表只含自己名下线索", sarahIds.includes(leadSarah.id) && !sarahIds.includes(leadProbe.id),
+    `含自己 ${sarahIds.includes(leadSarah.id)} / 含他人 ${sarahIds.includes(leadProbe.id)}`);
+
+  const getOther = await mkmSales.req("GET", `/api/students/${leadProbe.id}`);
+  check(6, "销售不能查看他人名下线索详情", blocked(getOther), `实际 ${getOther.status}`);
+
+  await mkmSales.req("PUT", `/api/students/${leadSarah.id}`, { salesId: probeSales.id });
+  const afterReassign = await prisma.student.findUnique({ where: { id: leadSarah.id } });
+  check(6, "销售不能改线索归属", afterReassign.salesId === sarahId, `现归属 ${afterReassign.salesId}`);
+
+  const mkmPrincipal = new Client("Markham 校长2"); await mkmPrincipal.login("6470000003", "principal123");
+  const getByP = await mkmPrincipal.req("GET", `/api/students/${leadProbe.id}`);
+  check(6, "校长能查看本校区任意线索", getByP.status === 200, `实际 ${getByP.status}`);
+  await mkmPrincipal.req("PUT", `/api/students/${leadProbe.id}`, { salesId: sarahId });
+  const afterAssign = await prisma.student.findUnique({ where: { id: leadProbe.id } });
+  check(6, "校长能分配/变更归属", afterAssign.salesId === sarahId, `现归属 ${afterAssign.salesId}`);
+
+  await cleanupOwner();
+  await prisma.user.deleteMany({ where: { phone: probeSalesPhone } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -572,7 +623,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5]) {
+for (const p of [1, 2, 3, 4, 5, 6]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

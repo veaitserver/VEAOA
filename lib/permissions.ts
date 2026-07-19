@@ -100,6 +100,29 @@ export function canManageStudents(user: SessionUser | null | undefined): boolean
   return hasRole(user, Role.SALES, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
+// ── 线索归属隔离 ─────────────────────────────────────────────────────────────
+/** 管理层看全校区（校长/教务/财务/超管）；销售只看分配给自己的线索。 */
+export function seesCampusWide(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
+/** 分配/改归属销售只限校长与超管。 */
+export function canAssignLeadOwner(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 列表按归属过滤：销售 → 仅自己名下；管理层 → 不加此过滤（仍受校区限制）。 */
+export function ownerFilter(user: SessionUser): { salesId: string } | undefined {
+  if (!user || seesCampusWide(user)) return undefined;
+  return { salesId: user.id };
+}
+
+/** 按 id 取到记录后，校验归属：非管理层的销售只能碰自己的。返回 null 放行。 */
+export function denyNotOwner(user: SessionUser, ownerId: string | null | undefined): string | null {
+  if (seesCampusWide(user)) return null;
+  return ownerId === user.id ? null : "只能操作分配给自己的线索";
+}
+
 export function canSubmitLog(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.TEACHER, Role.SUPER_ADMIN);
 }

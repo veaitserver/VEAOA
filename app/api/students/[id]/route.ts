@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { canManageStudents, denyCrossCampus, denyNotOwner, canAssignLeadOwner, type SessionUser } from "@/lib/permissions";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
 import { z } from "zod";
@@ -60,6 +60,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const denied = denyCrossCampus(session.user as SessionUser, student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+  // 归属隔离：销售只能看自己名下的线索/学生。
+  const notOwner = denyNotOwner(session.user as SessionUser, student.salesId);
+  if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
 
   // 压平成单个 deduction：只认「生效中」的那条。已撤销的课时已还回，
   // 该课应重新计入「已排未消耗」，故撤销后 deduction 视为空。
@@ -95,11 +98,18 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     ...rest
   } = parsed.data;
 
-  const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true } });
+  const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true, salesId: true } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const denied = denyCrossCampus(sessionUser, existing.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+  const notOwner = denyNotOwner(sessionUser, existing.salesId);
+  if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
+
+  // 改归属销售只限校长/超管；销售不能把线索转给别人或抢过来。
+  if (salesId !== undefined && salesId !== existing.salesId && !canAssignLeadOwner(sessionUser)) {
+    return NextResponse.json({ error: "仅校长可分配/变更线索归属" }, { status: 403 });
+  }
 
   // 迁校区要求对「迁出」和「迁入」两边都有权限，否则可以把学生推去自己看不到的校区。
   if (rest.campusId && rest.campusId !== existing.campusId) {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canManageStudents, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { campusScope, canManageStudents, denyCrossCampus, ownerFilter, type SessionUser } from "@/lib/permissions";
 import { normalizePhone, isValidPhone, normalizeAppId } from "@/lib/leadImport";
 import { deriveStage, FUNNEL_STAGES } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
@@ -37,6 +37,9 @@ export async function GET(req: Request) {
   const where: Record<string, unknown> = {};
   const scope = campusScope(sessionUser, campusId);
   if (scope) where.campusId = scope;
+  // 归属隔离：销售只看自己名下的线索/学生；管理层看全校区。
+  const owner = ownerFilter(sessionUser);
+  if (owner) where.salesId = owner.salesId;
   if (search) where.OR = [
     { name: { contains: search } },
     { phone: { contains: search } },

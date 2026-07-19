@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canCreatePackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { campusScope, canCreatePackage, denyCrossCampus, denyNotOwner, ownerFilter, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -28,7 +28,11 @@ export async function GET(req: Request) {
   if (status) where.status = status;
   if (studentId) where.studentId = studentId;
   const scope = campusScope(sessionUser);
-  if (scope) where.student = { campusId: scope };
+  const owner = ownerFilter(sessionUser);
+  const studentWhere: Record<string, unknown> = {};
+  if (scope) studentWhere.campusId = scope;
+  if (owner) studentWhere.salesId = owner.salesId; // 销售只看自己名下学生的课包
+  if (Object.keys(studentWhere).length) where.student = studentWhere;
 
   const packages = await prisma.coursePackage.findMany({
     where,
@@ -70,10 +74,10 @@ export async function POST(req: Request) {
   // 且 createdById 记的是自己 —— 销售报表会把提成算到攻击者头上。
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { campusId: true },
+    select: { campusId: true, salesId: true },
   });
   if (!student) return NextResponse.json({ error: "学生不存在" }, { status: 404 });
-  const denied = denyCrossCampus(sessionUser, student.campusId);
+  const denied = denyCrossCampus(sessionUser, student.campusId) ?? denyNotOwner(sessionUser, student.salesId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const pkg = await prisma.coursePackage.create({

@@ -11,6 +11,7 @@ import {
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
   isEnrolled?: boolean;
+  campusId: string;
   postalCode?: string | null;
   preferredContactApp?: string | null;
   contactAppId?: string | null;
@@ -55,7 +56,10 @@ const STATUS_COLORS: Record<string, string> = {
 export default function StudentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
+  const roles = (session?.user as { roles?: string[] } | undefined)?.roles ?? [];
+  const canAssign = roles.includes("PRINCIPAL") || roles.includes("SUPER_ADMIN");
   const [student, setStudent] = useState<Student | null>(null);
+  const [salesUsers, setSalesUsers] = useState<{ id: string; name: string }[]>([]);
   const [activeTab, setActiveTab] = useState<"profile" | "packages" | "followups" | "lessons">("profile");
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
   const [followUpForm, setFollowUpForm] = useState({
@@ -68,6 +72,24 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   }
 
   useEffect(() => { load(); }, [id]);
+
+  // 校长可分配归属销售：拉本校区销售列表。
+  useEffect(() => {
+    if (canAssign && student?.campusId) {
+      fetch(`/api/campaigns/sales?campusId=${student.campusId}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then(setSalesUsers)
+        .catch(() => setSalesUsers([]));
+    }
+  }, [canAssign, student?.campusId]);
+
+  async function assignOwner(salesId: string) {
+    await fetch(`/api/students/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ salesId: salesId || null }),
+    });
+    load();
+  }
 
   async function submitFollowUp(e: React.FormEvent) {
     e.preventDefault();
@@ -145,6 +167,17 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               </div>
             ))}
           </div>
+          {/* 校长分配归属销售 */}
+          {canAssign && (
+            <div className="flex items-center gap-2 pt-1">
+              <span className="text-xs text-slate-400">分配销售</span>
+              <select value={student.sales?.id ?? ""} onChange={(e) => assignOwner(e.target.value)}
+                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">未分配</option>
+                {salesUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="pt-2 flex items-center gap-3">
             <Link href={`/packages/new?studentId=${student.id}`} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 inline-block">
               + 新建课包
