@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TEACHERS_PER_PAGE = 5;
@@ -339,12 +340,25 @@ function CreateModal({
               <select value={form.packageId} onChange={e => setForm(f => ({ ...f, packageId: e.target.value }))}
                 className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">选择课包</option>
-                {studentPackages.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.grade?.name} · {p.subject.name} — 剩余 {Number(p.remainingHours).toFixed(1)}h
-                  </option>
-                ))}
+                {studentPackages.map(p => {
+                  const depleted = isDepleted(p.remainingHours);
+                  const suffix = depleted ? "（已耗尽，不可排课）" : isLowOnHours(p.remainingHours) ? "⚠️ 续费预警" : "";
+                  return (
+                    <option key={p.id} value={p.id} disabled={depleted}>
+                      {p.grade?.name} · {p.subject.name} — 剩余 {Number(p.remainingHours).toFixed(1)}h {suffix}
+                    </option>
+                  );
+                })}
               </select>
+              {(() => {
+                const sel = studentPackages.find(p => p.id === form.packageId);
+                if (!sel) return null;
+                if (isDepleted(sel.remainingHours))
+                  return <p className="mt-1.5 text-xs text-red-600">该课包课时已耗尽，需先续费方可排课。</p>;
+                if (isLowOnHours(sel.remainingHours))
+                  return <p className="mt-1.5 text-xs text-amber-600">⚠️ 剩余不足 {LOW_HOURS_THRESHOLD}h，请提醒学生续费。</p>;
+                return null;
+              })()}
             </div>
           )}
           <div>

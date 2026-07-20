@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatMoney, formatRate } from "@/lib/utils";
+import { isDepleted, isLowOnHours } from "@/lib/hours";
 import Pagination from "@/components/Pagination";
 
 type Package = {
@@ -89,7 +90,15 @@ export default function PackagesPage() {
                 <td className="px-4 py-3 text-sm text-slate-500 font-mono text-xs">
                   {Number(p.totalHours).toFixed(1)}h × {formatRate(p.pricePerHour)} = {formatMoney(p.totalAmount)}
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-800">{Number(p.remainingHours).toFixed(1)}h</td>
+                <td className="px-4 py-3 text-sm text-slate-800">
+                  {Number(p.remainingHours).toFixed(1)}h
+                  {p.status === "ACTIVE" && isDepleted(p.remainingHours) && (
+                    <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">已耗尽</span>
+                  )}
+                  {p.status === "ACTIVE" && isLowOnHours(p.remainingHours) && (
+                    <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">续费预警</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status]}`}>{STATUS_LABELS[p.status]}</span>
                 </td>

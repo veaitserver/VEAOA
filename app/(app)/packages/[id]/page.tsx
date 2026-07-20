@@ -4,6 +4,7 @@ import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils";
+import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
@@ -102,6 +103,17 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           {STATUS_LABELS[pkg.status]}
         </span>
       </div>
+
+      {pkg.status === "ACTIVE" && isDepleted(pkg.remainingHours) && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          课时已耗尽，无法继续排课。请提醒学生续费后新建课包。
+        </div>
+      )}
+      {pkg.status === "ACTIVE" && isLowOnHours(pkg.remainingHours) && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          ⚠️ 续费预警：剩余课时不足 {LOW_HOURS_THRESHOLD}h（当前 {Number(pkg.remainingHours).toFixed(1)}h），建议尽快联系学生续费。
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         {/* Info Card */}

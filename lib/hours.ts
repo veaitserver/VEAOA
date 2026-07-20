@@ -15,3 +15,17 @@ export function roundHours(hours: number): number {
 export function lessonHours(start: Date, end: Date): number {
   return roundHours((end.getTime() - start.getTime()) / 3_600_000);
 }
+
+/** 续费预警阈值：生效课包剩余低于此值即提示续费。 */
+export const LOW_HOURS_THRESHOLD = 5;
+
+/** 生效课包剩余是否已耗尽（不可再排课）。 */
+export function isDepleted(remaining: number | string): boolean {
+  return roundHours(Number(remaining)) <= 0;
+}
+
+/** 生效课包剩余是否触发续费预警（0 < 剩余 < 阈值）。已耗尽不算预警，用 isDepleted。 */
+export function isLowOnHours(remaining: number | string): boolean {
+  const r = roundHours(Number(remaining));
+  return r > 0 && r < LOW_HOURS_THRESHOLD;
+}
