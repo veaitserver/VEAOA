@@ -82,6 +82,11 @@ export function canFinanceConfirmPackage(user: SessionUser | null | undefined): 
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+/** 财务月度锁账（锁定/解锁某校区某月）。 */
+export function canManageMonthLock(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
 export function canEditActivePackage(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }

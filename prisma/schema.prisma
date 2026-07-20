@@ -30,6 +30,7 @@ model User {
   deductionReversals CourseDeduction[]
   notifications      Notification[]
   campaignsOwned     Campaign[]        @relation("CampaignOwner")
+  monthLocks         MonthLock[]       @relation("MonthLockBy")
 }
 
 model UserRole {
@@ -58,6 +59,21 @@ model Campus {
   students   Student[]
   classrooms Classroom[]
   campaigns  Campaign[]
+  monthLocks MonthLock[]
+}
+
+// 财务月度锁账：锁定某校区某月(YYYY-MM，多伦多)后，该月课程的核销/撤销冻结。
+model MonthLock {
+  id         String   @id @default(cuid())
+  campusId   String
+  month      String   // "YYYY-MM"
+  lockedById String
+  lockedAt   DateTime @default(now())
+
+  campus   Campus @relation(fields: [campusId], references: [id])
+  lockedBy User   @relation("MonthLockBy", fields: [lockedById], references: [id])
+
+  @@unique([campusId, month])
 }
 
 model Grade {

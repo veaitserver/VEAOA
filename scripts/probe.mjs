@@ -647,6 +647,44 @@ async function run() {
     `HTTP ${confirmF.status}，状态 ${afterF.status}`);
 
   await prisma.coursePackage.delete({ where: { id: twoStepPkg.id } });
+
+  // ── 阶段 8：财务月度锁账 ────────────────────────────────────────────────
+  console.log("\n阶段 8 — 财务月度锁账");
+  // 造一节 2026-05 的课 + 已提交日志（RH，挂在 fx.active 上）
+  const lockStart = new Date("2026-05-15T14:00:00Z");
+  const lockLesson = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
+      classroomId: fx.rhRoom.id, startTime: lockStart, endTime: new Date(lockStart.getTime() + 2 * 3600000),
+    },
+  });
+  const lockLog = await prisma.lessonLog.create({
+    data: { lessonId: lockLesson.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "lock test" },
+  });
+  await prisma.monthLock.deleteMany({ where: { campusId: "campus-rh" } });
+
+  const lockRes = await finance.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-05" });
+  check(8, "财务可锁定校区月份", lockRes.status === 201, `实际 ${lockRes.status}`);
+
+  const pLock = await rhPrincipal.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-04" });
+  check(8, "非财务不能锁账", blocked(pLock), `实际 ${pLock.status}`);
+
+  const confBlocked = await rhPrincipal.req("POST", `/api/lessons/${lockLesson.id}/confirm`);
+  check(8, "锁账后该月不能核销", confBlocked.status === 403, `实际 ${confBlocked.status}`);
+
+  await finance.req("DELETE", `/api/month-locks/${lockRes.body.id}`);
+  const confOk = await rhPrincipal.req("POST", `/api/lessons/${lockLesson.id}/confirm`);
+  check(8, "解锁后可核销", confOk.status === 200, `实际 ${confOk.status}`);
+
+  await finance.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-05" });
+  const revBlocked = await finance.req("POST", `/api/lessons/${lockLesson.id}/reverse`);
+  check(8, "锁账后不能撤销核销", revBlocked.status === 403, `实际 ${revBlocked.status}`);
+
+  // 清理：解锁 + 删扣课/日志/课程
+  await prisma.monthLock.deleteMany({ where: { campusId: "campus-rh" } });
+  await prisma.courseDeduction.deleteMany({ where: { logId: lockLog.id } });
+  await prisma.lessonLog.delete({ where: { id: lockLog.id } });
+  await prisma.scheduledLesson.delete({ where: { id: lockLesson.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -662,7 +700,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canReverseDeduction, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { roundHours } from "@/lib/hours";
+import { isMonthLocked } from "@/lib/monthLock";
 
 class AlreadyReversed extends Error {}
 
@@ -28,6 +29,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 财务已锁账的月份，不能再撤销核销。
+  if (await isMonthLocked(lesson.student.campusId, lesson.startTime)) {
+    return NextResponse.json({ error: "该月已被财务锁账，无法撤销核销" }, { status: 403 });
+  }
 
   // 生效中的扣课记录 = reversedAt 为空的那条。撤销后又重新核销会有多条，只撤最新生效的。
   const active = lesson.log?.deductions.find((d) => !d.reversedAt);

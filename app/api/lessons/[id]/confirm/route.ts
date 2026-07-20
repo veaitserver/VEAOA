@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canConfirmLog, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { lessonHours, roundHours } from "@/lib/hours";
+import { isMonthLocked } from "@/lib/monthLock";
 
 class InsufficientHours extends Error {}
 
@@ -30,6 +31,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   // 核销会真金白银地扣课时，跨校区绝不能放行。
   const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 财务已锁账的月份，校区人员不能再核销。
+  if (await isMonthLocked(lesson.student.campusId, lesson.startTime)) {
+    return NextResponse.json({ error: "该月已被财务锁账，无法核销" }, { status: 403 });
+  }
 
   if (!lesson.log) return NextResponse.json({ error: "老师尚未提交日志" }, { status: 400 });
   // 判「生效中的」扣课记录，而不是判存在性 —— 撤销后允许重新核销。
