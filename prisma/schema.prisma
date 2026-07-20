@@ -21,6 +21,7 @@ model User {
   studentsAsSales    Student[]         @relation("StudentSales")
   packagesCreated    CoursePackage[]   @relation("PackageCreator")
   packagesConfirmed  CoursePackage[]   @relation("PackageConfirmer")
+  packagesFinanceConfirmed CoursePackage[] @relation("PackageFinanceConfirmer")
   followUps          FollowUp[]
   lessonsAsTeacher   ScheduledLesson[]
   lessonLogs         LessonLog[]       @relation("LogTeacher")
@@ -174,16 +175,19 @@ model CoursePackage {
   remainingHours Float
   status         String    @default("PENDING_APPROVAL")
   createdById    String
-  confirmedById  String?
+  confirmedById  String?    // 校长确认人
   confirmedAt    DateTime?
+  financeConfirmedById String?  // 财务确认人（二次确认，正式生效）
+  financeConfirmedAt   DateTime?
   notes          String?
   createdAt      DateTime  @default(now())
 
-  student   Student  @relation(fields: [studentId], references: [id])
-  grade     Grade    @relation(fields: [gradeId], references: [id])
-  subject   Subject  @relation(fields: [subjectId], references: [id])
-  creator   User     @relation("PackageCreator", fields: [createdById], references: [id])
-  confirmer User?    @relation("PackageConfirmer", fields: [confirmedById], references: [id])
+  student          Student  @relation(fields: [studentId], references: [id])
+  grade            Grade    @relation(fields: [gradeId], references: [id])
+  subject          Subject  @relation(fields: [subjectId], references: [id])
+  creator          User     @relation("PackageCreator", fields: [createdById], references: [id])
+  confirmer        User?    @relation("PackageConfirmer", fields: [confirmedById], references: [id])
+  financeConfirmer User?    @relation("PackageFinanceConfirmer", fields: [financeConfirmedById], references: [id])
 
   lessons    ScheduledLesson[]
   deductions CourseDeduction[]

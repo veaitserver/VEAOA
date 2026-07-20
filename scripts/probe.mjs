@@ -608,6 +608,35 @@ async function run() {
 
   await cleanupOwner();
   await prisma.user.deleteMany({ where: { phone: probeSalesPhone } });
+
+  // ── 阶段 7：课包两步审批（校长确认 → 财务确认 → 生效）────────────────────
+  console.log("\n阶段 7 — 课包两步审批");
+  const twoStepPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10,
+      status: "PENDING_APPROVAL", createdById: fx.admin.id,
+    },
+  });
+  const rhPrincipal = new Client("RH 校长"); await rhPrincipal.login("6470000008", "principal123");
+
+  const skip = await finance.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
+  check(7, "财务不能跳过校长确认待审批课包", skip.status === 400, `实际 ${skip.status}`);
+
+  const confirmP = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/confirm`);
+  const afterP = await prisma.coursePackage.findUnique({ where: { id: twoStepPkg.id } });
+  check(7, "校长确认后为待财务、未直接生效", confirmP.status === 200 && afterP.status === "PENDING_FINANCE",
+    `HTTP ${confirmP.status}，状态 ${afterP.status}`);
+
+  const pFin = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
+  check(7, "校长不能做财务确认", blocked(pFin), `实际 ${pFin.status}`);
+
+  const confirmF = await finance.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
+  const afterF = await prisma.coursePackage.findUnique({ where: { id: twoStepPkg.id } });
+  check(7, "财务确认后正式生效 ACTIVE", confirmF.status === 200 && afterF.status === "ACTIVE",
+    `HTTP ${confirmF.status}，状态 ${afterF.status}`);
+
+  await prisma.coursePackage.delete({ where: { id: twoStepPkg.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -623,7 +652,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

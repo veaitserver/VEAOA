@@ -77,6 +77,11 @@ export function canConfirmPackage(user: SessionUser | null | undefined): boolean
   return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
+/** 财务二次确认课包（校长确认后 → 正式生效）。 */
+export function canFinanceConfirmPackage(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
 export function canEditActivePackage(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }

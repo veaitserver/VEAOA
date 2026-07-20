@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canConfirmPackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { canFinanceConfirmPackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 
+/**
+ * 财务二次确认课包：校长确认(PENDING_FINANCE) → 财务确认 → 正式生效(ACTIVE)。
+ * 生效后才能排课。
+ */
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const sessionUser = session.user as SessionUser;
-  if (!canConfirmPackage(sessionUser)) {
-    return NextResponse.json({ error: "仅校长或超管可确认课包" }, { status: 403 });
+  if (!canFinanceConfirmPackage(sessionUser)) {
+    return NextResponse.json({ error: "仅财务或超管可确认生效" }, { status: 403 });
   }
 
   const { id } = await params;
@@ -19,21 +23,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // 角色对了不代表校区对了：Markham 校长不该批 Richmond Hill 的单。
   const denied = denyCrossCampus(sessionUser, pkg.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
-  if (pkg.status !== "PENDING_APPROVAL") {
-    return NextResponse.json({ error: "课包已不是待校长确认状态" }, { status: 400 });
+  if (pkg.status !== "PENDING_FINANCE") {
+    return NextResponse.json({ error: "课包不是待财务确认状态" }, { status: 400 });
   }
 
-  // 校长确认 → 进入待财务确认（还未正式生效，不能排课）。
   const updated = await prisma.coursePackage.update({
     where: { id },
     data: {
-      status: "PENDING_FINANCE",
-      confirmedById: sessionUser.id,
-      confirmedAt: new Date(),
+      status: "ACTIVE",
+      financeConfirmedById: sessionUser.id,
+      financeConfirmedAt: new Date(),
     },
   });
 

@@ -14,10 +14,11 @@ type Package = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  PENDING_APPROVAL: "待确认", ACTIVE: "已激活", FINANCE_LOCK: "财务锁定",
+  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效", FINANCE_LOCK: "财务锁定",
 };
 const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",
+  PENDING_FINANCE: "bg-orange-100 text-orange-700",
   ACTIVE: "bg-green-100 text-green-700",
   FINANCE_LOCK: "bg-red-100 text-red-700",
 };
@@ -47,7 +48,7 @@ export default function PackagesPage() {
       </div>
 
       <div className="flex gap-2">
-        {[["", "全部"], ["PENDING_APPROVAL", "待确认"], ["ACTIVE", "已激活"], ["FINANCE_LOCK", "财务锁定"]].map(([val, label]) => (
+        {[["", "全部"], ["PENDING_APPROVAL", "待校长确认"], ["PENDING_FINANCE", "待财务确认"], ["ACTIVE", "已生效"], ["FINANCE_LOCK", "财务锁定"]].map(([val, label]) => (
           <button key={val} onClick={() => setFilter(val)}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${filter === val ? "bg-blue-600 text-white border-blue-600" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
             {label}

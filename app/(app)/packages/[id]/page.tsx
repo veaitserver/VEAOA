@@ -7,10 +7,11 @@ import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
-  pricePerHour: string; totalAmount: string; notes?: string; createdAt: string; confirmedAt?: string;
+  pricePerHour: string; totalAmount: string; notes?: string; createdAt: string;
+  confirmedAt?: string; financeConfirmedAt?: string;
   student: { id: string; name: string };
   grade: { name: string }; subject: { name: string };
-  creator: { name: string }; confirmer: { name: string } | null;
+  creator: { name: string }; confirmer: { name: string } | null; financeConfirmer: { name: string } | null;
   deductions: Deduction[];
   lessons: LessonRef[];
 };
@@ -25,9 +26,12 @@ type LessonRef = {
   teacher: { name: string }; classroom: { name: string };
 };
 
-const STATUS_LABELS: Record<string, string> = { PENDING_APPROVAL: "待确认", ACTIVE: "已激活", FINANCE_LOCK: "财务锁定" };
+const STATUS_LABELS: Record<string, string> = {
+  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效", FINANCE_LOCK: "财务锁定",
+};
 const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",
+  PENDING_FINANCE: "bg-orange-100 text-orange-700",
   ACTIVE: "bg-green-100 text-green-700",
   FINANCE_LOCK: "bg-red-100 text-red-700",
 };
@@ -40,6 +44,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
 
   const userRoles: string[] = (session?.user as { roles: string[] })?.roles ?? [];
   const canConfirm = userRoles.some(r => ["PRINCIPAL", "SUPER_ADMIN"].includes(r));
+  const canFinanceConfirm = userRoles.some(r => ["FINANCE", "SUPER_ADMIN"].includes(r));
   const canEdit = userRoles.some(r => ["FINANCE", "SUPER_ADMIN"].includes(r)) ||
     (pkg?.status === "PENDING_APPROVAL" && userRoles.some(r => ["SALES", "PRINCIPAL"].includes(r)));
 
@@ -51,9 +56,15 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => { load(); }, [id]);
 
   async function handleConfirm() {
-    if (!confirm("确认激活该课包？激活后销售和校长将无法修改。")) return;
     setConfirming(true);
     await fetch(`/api/packages/${id}/confirm`, { method: "POST" });
+    setConfirming(false);
+    load();
+  }
+
+  async function handleFinanceConfirm() {
+    setConfirming(true);
+    await fetch(`/api/packages/${id}/finance-confirm`, { method: "POST" });
     setConfirming(false);
     load();
   }
@@ -88,8 +99,8 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             ["学生", <Link key="s" href={`/students/${pkg.student.id}`} className="text-blue-600 hover:underline">{pkg.student.name}</Link>],
             ["年级 / 科目", `${pkg.grade.name} · ${pkg.subject.name}`],
             ["创建人", pkg.creator.name],
-            ["确认人", pkg.confirmer?.name ?? "—"],
-            ["确认时间", pkg.confirmedAt ? formatDateTime(pkg.confirmedAt) : "—"],
+            ["校长确认", pkg.confirmer?.name ? `${pkg.confirmer.name}${pkg.confirmedAt ? " · " + formatDateTime(pkg.confirmedAt) : ""}` : "—"],
+            ["财务确认", pkg.financeConfirmer?.name ? `${pkg.financeConfirmer.name}${pkg.financeConfirmedAt ? " · " + formatDateTime(pkg.financeConfirmedAt) : ""}` : "—"],
             ["创建时间", formatDate(pkg.createdAt)],
           ].map(([label, value]) => (
             <div key={label as string} className="flex justify-between text-sm">
@@ -137,7 +148,13 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         {canConfirm && pkg.status === "PENDING_APPROVAL" && (
           <button onClick={handleConfirm} disabled={confirming}
             className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-            {confirming ? "确认中..." : "✓ 确认激活"}
+            {confirming ? "处理中..." : "✓ 校长确认"}
+          </button>
+        )}
+        {canFinanceConfirm && pkg.status === "PENDING_FINANCE" && (
+          <button onClick={handleFinanceConfirm} disabled={confirming}
+            className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+            {confirming ? "处理中..." : "✓ 财务确认生效"}
           </button>
         )}
         {canEdit && pkg.status === "PENDING_APPROVAL" && (

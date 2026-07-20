@@ -22,6 +22,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       grade: true, subject: true,
       creator: { select: { name: true } },
       confirmer: { select: { name: true } },
+      financeConfirmer: { select: { name: true } },
       deductions: {
         include: { reverser: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
