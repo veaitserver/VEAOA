@@ -9,6 +9,8 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const phase = searchParams.get("phase"); // "scheduled" | "pending_log" | "pending_confirm" | "completed"
+  const start = searchParams.get("start"); // ISO，按上课时间过滤（核销管理默认当月）
+  const end = searchParams.get("end");
 
   const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
   const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
@@ -25,13 +27,22 @@ export async function GET(req: Request) {
 
   const where: Record<string, unknown> = { ...baseWhere };
 
+  // 按上课时间过滤（核销管理的时间范围，默认当月）。
+  const timeRange: Record<string, Date> = {};
+  if (start) timeRange.gte = new Date(start);
+  if (end) timeRange.lte = new Date(end);
+
   if (phase === "pending_log") {
     where.log = null;
-    where.startTime = { lt: new Date() }; // Past lessons without log
+    where.startTime = { ...timeRange, lt: new Date() }; // Past lessons without log
   } else if (phase === "pending_confirm") {
     where.log = { isNot: null, confirmedAt: null };
+    if (start || end) where.startTime = timeRange;
   } else if (phase === "completed") {
     where.log = { confirmedAt: { not: null } };
+    if (start || end) where.startTime = timeRange;
+  } else if (start || end) {
+    where.startTime = timeRange;
   }
 
   const lessons = await prisma.scheduledLesson.findMany({

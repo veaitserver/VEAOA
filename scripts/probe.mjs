@@ -648,43 +648,53 @@ async function run() {
 
   await prisma.coursePackage.delete({ where: { id: twoStepPkg.id } });
 
-  // ── 阶段 8：财务月度锁账 ────────────────────────────────────────────────
-  console.log("\n阶段 8 — 财务月度锁账");
-  // 造一节 2026-05 的课 + 已提交日志（RH，挂在 fx.active 上）
-  const lockStart = new Date("2026-05-15T14:00:00Z");
-  const lockLesson = await prisma.scheduledLesson.create({
+  // ── 阶段 8：核销财务锁（确认满一周自动锁，财务可解锁）────────────────────
+  console.log("\n阶段 8 — 核销财务锁");
+  const lockPkg = await prisma.coursePackage.create({
     data: {
-      teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
-      classroomId: fx.rhRoom.id, startTime: lockStart, endTime: new Date(lockStart.getTime() + 2 * 3600000),
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 20, pricePerHour: 100, totalAmount: 2000, remainingHours: 20,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
     },
   });
-  const lockLog = await prisma.lessonLog.create({
-    data: { lessonId: lockLesson.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "lock test" },
-  });
-  await prisma.monthLock.deleteMany({ where: { campusId: "campus-rh" } });
+  const mkLesson = async (offsetDays) => {
+    const s = new Date(fx.base.getTime() + offsetDays * 86400000);
+    const les = await prisma.scheduledLesson.create({
+      data: { teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: lockPkg.id, classroomId: fx.rhRoom.id, startTime: s, endTime: new Date(s.getTime() + 2 * 3600000) },
+    });
+    await prisma.lessonLog.create({ data: { lessonId: les.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "lock test" } });
+    return les;
+  };
 
-  const lockRes = await finance.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-05" });
-  check(8, "财务可锁定校区月份", lockRes.status === 201, `实际 ${lockRes.status}`);
+  // A) 满一周 → 锁定：核销后把扣课记录回拨 8 天
+  const lesA = await mkLesson(60);
+  await rhPrincipal.req("POST", `/api/lessons/${lesA.id}/confirm`);
+  const dedA = await prisma.courseDeduction.findFirst({ where: { log: { lessonId: lesA.id }, reversedAt: null } });
+  await prisma.courseDeduction.update({ where: { id: dedA.id }, data: { createdAt: new Date(Date.now() - 8 * 86400000) } });
 
-  const pLock = await rhPrincipal.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-04" });
-  check(8, "非财务不能锁账", blocked(pLock), `实际 ${pLock.status}`);
+  const revLocked = await finance.req("POST", `/api/lessons/${lesA.id}/reverse`);
+  check(8, "确认满一周自动锁定，不能撤销", revLocked.status === 403, `实际 ${revLocked.status}`);
 
-  const confBlocked = await rhPrincipal.req("POST", `/api/lessons/${lockLesson.id}/confirm`);
-  check(8, "锁账后该月不能核销", confBlocked.status === 403, `实际 ${confBlocked.status}`);
+  const pUnlock = await rhPrincipal.req("POST", `/api/lessons/${lesA.id}/unlock`);
+  check(8, "非财务不能解锁", blocked(pUnlock), `实际 ${pUnlock.status}`);
 
-  await finance.req("DELETE", `/api/month-locks/${lockRes.body.id}`);
-  const confOk = await rhPrincipal.req("POST", `/api/lessons/${lockLesson.id}/confirm`);
-  check(8, "解锁后可核销", confOk.status === 200, `实际 ${confOk.status}`);
+  const unlock = await finance.req("POST", `/api/lessons/${lesA.id}/unlock`);
+  check(8, "财务可解锁", unlock.status === 200, `实际 ${unlock.status}`);
 
-  await finance.req("POST", "/api/month-locks", { campusId: "campus-rh", month: "2026-05" });
-  const revBlocked = await finance.req("POST", `/api/lessons/${lockLesson.id}/reverse`);
-  check(8, "锁账后不能撤销核销", revBlocked.status === 403, `实际 ${revBlocked.status}`);
+  const revOk = await finance.req("POST", `/api/lessons/${lesA.id}/reverse`);
+  check(8, "解锁后可撤销核销", revOk.status === 200, `实际 ${revOk.status}`);
 
-  // 清理：解锁 + 删扣课/日志/课程
-  await prisma.monthLock.deleteMany({ where: { campusId: "campus-rh" } });
-  await prisma.courseDeduction.deleteMany({ where: { logId: lockLog.id } });
-  await prisma.lessonLog.delete({ where: { id: lockLog.id } });
-  await prisma.scheduledLesson.delete({ where: { id: lockLesson.id } });
+  // B) 未满一周 → 可直接撤销
+  const lesB = await mkLesson(67);
+  await rhPrincipal.req("POST", `/api/lessons/${lesB.id}/confirm`);
+  const revFresh = await finance.req("POST", `/api/lessons/${lesB.id}/reverse`);
+  check(8, "确认未满一周可直接撤销", revFresh.status === 200, `实际 ${revFresh.status}`);
+
+  // 清理
+  await prisma.courseDeduction.deleteMany({ where: { packageId: lockPkg.id } });
+  await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: lockPkg.id } } });
+  await prisma.scheduledLesson.deleteMany({ where: { packageId: lockPkg.id } });
+  await prisma.coursePackage.delete({ where: { id: lockPkg.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { formatDate, formatTime } from "@/lib/utils";
+import { isDeductionLocked } from "@/lib/lock";
 
 type Lesson = {
   id: string; startTime: string; endTime: string; lessonType: string;
@@ -14,7 +15,11 @@ type Lesson = {
     id: string; notes: string; submittedAt: string;
     confirmedAt?: string; confirmer?: { name: string };
     subject: { name: string };
-    deduction?: { id: string; hoursDeducted: string; reversedAt?: string; reverser?: { name: string } };
+    deduction?: {
+      id: string; hoursDeducted: string; createdAt: string;
+      reversedAt?: string; reverser?: { name: string };
+      financeUnlockedAt?: string | null;
+    };
   };
 };
 
@@ -26,9 +31,24 @@ const PHASES = [
   { key: "completed", label: "已核销" },
 ];
 
+// 当前月的 "YYYY-MM"
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// "YYYY-MM" → 本地月份起止 ISO
+function monthRange(m: string): { start: string; end: string } {
+  const [y, mo] = m.split("-").map(Number);
+  return {
+    start: new Date(y, mo - 1, 1, 0, 0, 0).toISOString(),
+    end: new Date(y, mo, 0, 23, 59, 59).toISOString(),
+  };
+}
+
 export default function LessonsPage() {
   const { data: session } = useSession();
   const [phase, setPhase] = useState("pending_log");
+  const [month, setMonth] = useState(currentMonth());
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,17 +61,25 @@ export default function LessonsPage() {
   const canConfirm = userRoles.some(r => ["ACADEMIC_ADMIN", "PRINCIPAL", "SUPER_ADMIN"].includes(r));
   const canReverse = userRoles.some(r => ["FINANCE", "SUPER_ADMIN"].includes(r));
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch(`/api/lessons?phase=${phase}`);
+    const { start, end } = monthRange(month);
+    const res = await fetch(`/api/lessons?phase=${phase}&start=${start}&end=${end}`);
     if (res.ok) setLessons(await res.json());
     setLoading(false);
-  }
+  }, [phase, month]);
+
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    load();
     fetch("/api/admin/subjects").then(r => r.json()).then(setSubjects);
-  }, [phase]);
+  }, []);
+
+  async function unlockLesson(lessonId: string) {
+    const res = await fetch(`/api/lessons/${lessonId}/unlock`, { method: "POST" });
+    if (res.ok) load();
+    else { const d = await res.json(); alert(d.error); }
+  }
 
   async function submitLog(lessonId: string) {
     setError("");
@@ -81,14 +109,23 @@ export default function LessonsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-800">核销管理</h1>
 
-      {/* Phase tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-        {PHASES.map(p => (
-          <button key={p.key} onClick={() => setPhase(p.key)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${phase === p.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-            {p.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        {/* Phase tabs */}
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+          {PHASES.map(p => (
+            <button key={p.key} onClick={() => setPhase(p.key)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${phase === p.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {/* 时间范围（按上课月份，默认当月）*/}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">月份</span>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value || currentMonth())}
+            className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <button onClick={() => setMonth(currentMonth())} className="text-xs text-blue-600 hover:underline">回到当月</button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -134,6 +171,9 @@ export default function LessonsPage() {
                           {l.log.deduction?.reversedAt && (
                             <p className="text-red-600">已撤销 by {l.log.deduction.reverser?.name}</p>
                           )}
+                          {l.log.deduction && !l.log.deduction.reversedAt && isDeductionLocked(l.log.deduction) && (
+                            <p className="text-slate-500">🔒 已锁定（确认满一周）</p>
+                          )}
                         </div>
                       ) : "—"}
                     </td>
@@ -152,10 +192,17 @@ export default function LessonsPage() {
                       </button>
                     )}
                     {phase === "completed" && canReverse && l.log?.deduction && !l.log.deduction.reversedAt && (
-                      <button onClick={() => reverseLesson(l.id)}
-                        className="border border-red-300 text-red-600 px-3 py-1 rounded text-xs font-medium hover:bg-red-50">
-                        撤销核销
-                      </button>
+                      isDeductionLocked(l.log.deduction) ? (
+                        <button onClick={() => unlockLesson(l.id)}
+                          className="border border-amber-300 text-amber-700 px-3 py-1 rounded text-xs font-medium hover:bg-amber-50">
+                          解锁
+                        </button>
+                      ) : (
+                        <button onClick={() => reverseLesson(l.id)}
+                          className="border border-red-300 text-red-600 px-3 py-1 rounded text-xs font-medium hover:bg-red-50">
+                          撤销核销
+                        </button>
+                      )
                     )}
                   </td>
                 </tr>

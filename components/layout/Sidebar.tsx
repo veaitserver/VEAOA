@@ -7,7 +7,6 @@ import type { Role } from "@/lib/enums";
 import {
   canManageLeads,
   canManageCampaigns,
-  canManageMonthLock,
   canManageUsers,
   canViewPackages,
   canViewSalesReport,
@@ -49,7 +48,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/reports/sales", label: "销售报表", icon: "📊", can: canViewSalesReport },
       { href: "/reports/teachers", label: "工时报表", icon: "⏱️", can: canViewTeacherReport },
-      { href: "/month-locks", label: "月度锁账", icon: "🔒", can: canManageMonthLock },
     ],
   },
   {

@@ -30,7 +30,7 @@ model User {
   deductionReversals CourseDeduction[]
   notifications      Notification[]
   campaignsOwned     Campaign[]        @relation("CampaignOwner")
-  monthLocks         MonthLock[]       @relation("MonthLockBy")
+  deductionUnlocks   CourseDeduction[] @relation("DeductionUnlocker")
 }
 
 model UserRole {
@@ -59,21 +59,6 @@ model Campus {
   students   Student[]
   classrooms Classroom[]
   campaigns  Campaign[]
-  monthLocks MonthLock[]
-}
-
-// 财务月度锁账：锁定某校区某月(YYYY-MM，多伦多)后，该月课程的核销/撤销冻结。
-model MonthLock {
-  id         String   @id @default(cuid())
-  campusId   String
-  month      String   // "YYYY-MM"
-  lockedById String
-  lockedAt   DateTime @default(now())
-
-  campus   Campus @relation(fields: [campusId], references: [id])
-  lockedBy User   @relation("MonthLockBy", fields: [lockedById], references: [id])
-
-  @@unique([campusId, month])
 }
 
 model Grade {
@@ -269,10 +254,14 @@ model CourseDeduction {
   createdAt     DateTime  @default(now())
   reversedAt    DateTime?
   reversedById  String?
+  // 财务锁：核销确认满一周自动锁定，锁定后不能撤销；财务可解锁一条以便更正。
+  financeUnlockedAt   DateTime?
+  financeUnlockedById String?
 
-  package  CoursePackage @relation(fields: [packageId], references: [id])
-  log      LessonLog     @relation(fields: [logId], references: [id])
-  reverser User?         @relation(fields: [reversedById], references: [id])
+  package        CoursePackage @relation(fields: [packageId], references: [id])
+  log            LessonLog     @relation(fields: [logId], references: [id])
+  reverser       User?         @relation(fields: [reversedById], references: [id])
+  financeUnlocker User?        @relation("DeductionUnlocker", fields: [financeUnlockedById], references: [id])
 }
 
 model Notification {
