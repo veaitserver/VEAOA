@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
+import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD, roundHours } from "@/lib/hours";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TEACHERS_PER_PAGE = 5;
@@ -69,6 +69,14 @@ function lessonTopPx(startIso: string) {
 function lessonHeightPx(startIso: string, endIso: string) {
   const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
   return Math.max(20, (ms / 3_600_000) * HOUR_PX);
+}
+
+// "HH:MM" 起止算本节课时长（小时）；非法或负值返回 0。
+function durationHoursFromHHMM(start: string, end: string): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  if ([sh, sm, eh, em].some(Number.isNaN)) return 0;
+  return Math.max(0, roundHours((eh * 60 + em - sh * 60 - sm) / 60));
 }
 
 function lessonColor(ep: Lesson["extendedProps"]) {
@@ -353,8 +361,13 @@ function CreateModal({
               {(() => {
                 const sel = studentPackages.find(p => p.id === form.packageId);
                 if (!sel) return null;
+                const remaining = roundHours(Number(sel.remainingHours));
                 if (isDepleted(sel.remainingHours))
                   return <p className="mt-1.5 text-xs text-red-600">该课包课时已耗尽，需先续费方可排课。</p>;
+                // 本节课时长 > 剩余：直接超库存，无法排课（未减去已排未核销，服务端还会兜底）。
+                const durationH = durationHoursFromHHMM(startTime, endTime);
+                if (durationH > 0 && durationH > remaining)
+                  return <p className="mt-1.5 text-xs text-red-600">本节课 {durationH}h，超过课包剩余 {remaining}h，课时不够，无法排课。</p>;
                 if (isLowOnHours(sel.remainingHours))
                   return <p className="mt-1.5 text-xs text-amber-600">⚠️ 剩余不足 {LOW_HOURS_THRESHOLD}h，请提醒学生续费。</p>;
                 return null;
