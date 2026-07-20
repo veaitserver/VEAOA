@@ -7,6 +7,7 @@ export const Role = {
   ACADEMIC_ADMIN: "ACADEMIC_ADMIN",
   PRINCIPAL: "PRINCIPAL",
   FINANCE: "FINANCE",
+  STUDENT_MANAGER: "STUDENT_MANAGER", // 学管：校长确认课包时分配，负责学生学业管理
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
 

@@ -623,10 +623,20 @@ async function run() {
   const skip = await finance.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
   check(7, "财务不能跳过校长确认待审批课包", skip.status === 400, `实际 ${skip.status}`);
 
-  const confirmP = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/confirm`);
+  // 校长确认并分配学管（RH 学管 user-sm-rh）
+  const confirmP = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/confirm`, { studentManagerId: "user-sm-rh" });
   const afterP = await prisma.coursePackage.findUnique({ where: { id: twoStepPkg.id } });
+  const studentAfter = await prisma.student.findUnique({ where: { id: fx.student.id }, select: { studentManagerId: true } });
   check(7, "校长确认后为待财务、未直接生效", confirmP.status === 200 && afterP.status === "PENDING_FINANCE",
     `HTTP ${confirmP.status}，状态 ${afterP.status}`);
+  check(7, "校长确认时分配学管生效", studentAfter.studentManagerId === "user-sm-rh", `学管 ${studentAfter.studentManagerId}`);
+
+  // 非校长（教务，能访问学生但无分配权）不能分配学管
+  const acadMkm = new Client("Markham 教务"); await acadMkm.login("6470000004", "acad123");
+  const acadAssign = await acadMkm.req("PUT", "/api/students/student-mkm-1", { studentManagerId: "user-sm-mkm" });
+  const mkm1After = await prisma.student.findUnique({ where: { id: "student-mkm-1" }, select: { studentManagerId: true } });
+  check(7, "非校长(教务)不能分配学管", acadAssign.status === 403 && mkm1After.studentManagerId === null,
+    `HTTP ${acadAssign.status}，学管 ${mkm1After.studentManagerId}`);
 
   const pFin = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
   check(7, "校长不能做财务确认", blocked(pFin), `实际 ${pFin.status}`);

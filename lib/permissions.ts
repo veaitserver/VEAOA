@@ -106,9 +106,14 @@ export function canManageStudents(user: SessionUser | null | undefined): boolean
 }
 
 // ── 线索归属隔离 ─────────────────────────────────────────────────────────────
-/** 管理层看全校区（校长/教务/财务/超管）；销售只看分配给自己的线索。 */
+/** 管理层看全校区（校长/教务/财务/学管/超管）；销售只看分配给自己的线索。 */
 export function seesCampusWide(user: SessionUser | null | undefined): boolean {
-  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.STUDENT_MANAGER, Role.SUPER_ADMIN);
+}
+
+/** 分配学管只限校长与超管（确认课包时一并分配）。 */
+export function canAssignStudentManager(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
 /** 分配/改归属销售只限校长与超管。 */
@@ -181,4 +186,5 @@ export const ROLE_LABELS: Record<Role, string> = {
   ACADEMIC_ADMIN: "教务",
   PRINCIPAL: "校长",
   FINANCE: "财务",
+  STUDENT_MANAGER: "学管",
 };

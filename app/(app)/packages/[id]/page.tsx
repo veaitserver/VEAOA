@@ -9,7 +9,7 @@ type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
   pricePerHour: string; totalAmount: string; notes?: string; createdAt: string;
   confirmedAt?: string; financeConfirmedAt?: string;
-  student: { id: string; name: string };
+  student: { id: string; name: string; campusId: string };
   grade: { name: string }; subject: { name: string };
   creator: { name: string }; confirmer: { name: string } | null; financeConfirmer: { name: string } | null;
   deductions: Deduction[];
@@ -41,6 +41,8 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const { data: session } = useSession();
   const [pkg, setPkg] = useState<Package | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
+  const [managerId, setManagerId] = useState("");
 
   const userRoles: string[] = (session?.user as { roles: string[] })?.roles ?? [];
   const canConfirm = userRoles.some(r => ["PRINCIPAL", "SUPER_ADMIN"].includes(r));
@@ -55,9 +57,20 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => { load(); }, [id]);
 
+  // 校长确认前拉本校区学管，供确认时分配。
+  useEffect(() => {
+    if (canConfirm && pkg?.status === "PENDING_APPROVAL" && pkg.student.campusId) {
+      fetch(`/api/students/managers?campusId=${pkg.student.campusId}`)
+        .then((r) => (r.ok ? r.json() : [])).then(setManagers).catch(() => setManagers([]));
+    }
+  }, [canConfirm, pkg?.status, pkg?.student.campusId]);
+
   async function handleConfirm() {
     setConfirming(true);
-    await fetch(`/api/packages/${id}/confirm`, { method: "POST" });
+    await fetch(`/api/packages/${id}/confirm`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentManagerId: managerId || null }),
+    });
     setConfirming(false);
     load();
   }
@@ -144,12 +157,22 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* Actions */}
-      <div className="flex gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {canConfirm && pkg.status === "PENDING_APPROVAL" && (
-          <button onClick={handleConfirm} disabled={confirming}
-            className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-            {confirming ? "处理中..." : "✓ 校长确认"}
-          </button>
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">分配学管</span>
+              <select value={managerId} onChange={(e) => setManagerId(e.target.value)}
+                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">暂不分配</option>
+                {managers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <button onClick={handleConfirm} disabled={confirming}
+              className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+              {confirming ? "处理中..." : "✓ 校长确认"}
+            </button>
+          </>
         )}
         {canFinanceConfirm && pkg.status === "PENDING_FINANCE" && (
           <button onClick={handleFinanceConfirm} disabled={confirming}

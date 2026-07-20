@@ -165,6 +165,18 @@ async function main() {
       campuses: { create: [{ campusId: campusMarkham.id }] },
     },
   });
+  await prisma.user.upsert({
+    where: { phone: "6470000011" },
+    update: {},
+    create: {
+      id: "user-sm-mkm",
+      name: "Grace Tan",
+      phone: "6470000011",
+      passwordHash: await pw("sm123"),
+      roles: { create: [{ role: Role.STUDENT_MANAGER }] },
+      campuses: { create: [{ campusId: campusMarkham.id }] },
+    },
+  });
 
   // Richmond Hill Campus staff
   const salesRH = await prisma.user.upsert({
@@ -200,6 +212,18 @@ async function main() {
       phone: "6470000008",
       passwordHash: await pw("principal123"),
       roles: { create: [{ role: Role.PRINCIPAL }] },
+      campuses: { create: [{ campusId: campusRH.id }] },
+    },
+  });
+  await prisma.user.upsert({
+    where: { phone: "6470000012" },
+    update: {},
+    create: {
+      id: "user-sm-rh",
+      name: "Henry Xu",
+      phone: "6470000012",
+      passwordHash: await pw("sm123"),
+      roles: { create: [{ role: Role.STUDENT_MANAGER }] },
       campuses: { create: [{ campusId: campusRH.id }] },
     },
   });
@@ -834,6 +858,8 @@ async function main() {
   console.log("  [Markham]       Teacher:      6470000002 / teacher123");
   console.log("  [Markham]       Principal:    6470000003 / principal123");
   console.log("  [Markham]       Acad Admin:   6470000004 / acad123");
+  console.log("  [Markham]       学管:         6470000011 / sm123");
+  console.log("  [Richmond Hill] 学管:         6470000012 / sm123");
   console.log("  [Richmond Hill] Sales:        6470000006 / sales123");
   console.log("  [Richmond Hill] Teacher:      6470000007 / teacher123");
   console.log("  [Richmond Hill] Principal:    6470000008 / principal123");

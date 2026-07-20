@@ -18,6 +18,7 @@ type Student = {
   grade: { id: string; name: string } | null;
   campus: { name: string };
   sales: { id: string; name: string } | null;
+  studentManager: { id: string; name: string } | null;
   leadInfo: (LeadInfo & { source: string }) | null;
   followUps: FollowUp[];
   packages: Package[];
@@ -60,6 +61,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   const canAssign = roles.includes("PRINCIPAL") || roles.includes("SUPER_ADMIN");
   const [student, setStudent] = useState<Student | null>(null);
   const [salesUsers, setSalesUsers] = useState<{ id: string; name: string }[]>([]);
+  const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
   const [activeTab, setActiveTab] = useState<"profile" | "packages" | "followups" | "lessons">("profile");
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
   const [followUpForm, setFollowUpForm] = useState({
@@ -73,20 +75,18 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => { load(); }, [id]);
 
-  // 校长可分配归属销售：拉本校区销售列表。
+  // 校长可分配归属销售与学管：拉本校区销售/学管列表。
   useEffect(() => {
     if (canAssign && student?.campusId) {
-      fetch(`/api/campaigns/sales?campusId=${student.campusId}`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then(setSalesUsers)
-        .catch(() => setSalesUsers([]));
+      fetch(`/api/campaigns/sales?campusId=${student.campusId}`).then((r) => (r.ok ? r.json() : [])).then(setSalesUsers).catch(() => setSalesUsers([]));
+      fetch(`/api/students/managers?campusId=${student.campusId}`).then((r) => (r.ok ? r.json() : [])).then(setManagers).catch(() => setManagers([]));
     }
   }, [canAssign, student?.campusId]);
 
-  async function assignOwner(salesId: string) {
+  async function assignField(field: "salesId" | "studentManagerId", value: string) {
     await fetch(`/api/students/${id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ salesId: salesId || null }),
+      body: JSON.stringify({ [field]: value || null }),
     });
     load();
   }
@@ -153,6 +153,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               ["校区", student.campus.name],
               ["邮编", student.postalCode || "—"],
               ["归属销售", student.sales?.name || "—"],
+              ["学管", student.studentManager?.name || "—"],
               ["学员状态", stageLabel(stage)],
               ["来源大类", sourceCategoryLabel(student.leadInfo)],
               ["来源明细", student.leadInfo?.sourceDetail || "—"],
@@ -167,15 +168,25 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               </div>
             ))}
           </div>
-          {/* 校长分配归属销售 */}
+          {/* 校长分配归属销售 / 学管 */}
           {canAssign && (
-            <div className="flex items-center gap-2 pt-1">
-              <span className="text-xs text-slate-400">分配销售</span>
-              <select value={student.sales?.id ?? ""} onChange={(e) => assignOwner(e.target.value)}
-                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">未分配</option>
-                {salesUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">分配销售</span>
+                <select value={student.sales?.id ?? ""} onChange={(e) => assignField("salesId", e.target.value)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">未分配</option>
+                  {salesUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">分配学管</span>
+                <select value={student.studentManager?.id ?? ""} onChange={(e) => assignField("studentManagerId", e.target.value)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">未分配</option>
+                  {managers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
             </div>
           )}
           <div className="pt-2 flex items-center gap-3">

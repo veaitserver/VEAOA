@@ -19,6 +19,7 @@ model User {
   campuses UserCampus[]
 
   studentsAsSales    Student[]         @relation("StudentSales")
+  studentsAsManager  Student[]         @relation("StudentManager")
   packagesCreated    CoursePackage[]   @relation("PackageCreator")
   packagesConfirmed  CoursePackage[]   @relation("PackageConfirmer")
   packagesFinanceConfirmed CoursePackage[] @relation("PackageFinanceConfirmer")
@@ -83,6 +84,8 @@ model Student {
   gradeId      String?
   publicSchool String?
   salesId      String?
+  // 学管：校长确认课包时分配，负责学生学业管理。
+  studentManagerId String?
   campusId     String
   // 加拿大用邮编（前三位 FSA）划分营销区域。
   postalCode   String?
@@ -91,9 +94,10 @@ model Student {
   contactAppId        String?
   createdAt    DateTime @default(now())
 
-  grade    Grade?  @relation(fields: [gradeId], references: [id])
-  sales    User?   @relation("StudentSales", fields: [salesId], references: [id])
-  campus   Campus  @relation(fields: [campusId], references: [id])
+  grade          Grade?  @relation(fields: [gradeId], references: [id])
+  sales          User?   @relation("StudentSales", fields: [salesId], references: [id])
+  studentManager User?   @relation("StudentManager", fields: [studentManagerId], references: [id])
+  campus         Campus  @relation(fields: [campusId], references: [id])
 
   leadInfo  Lead?
   followUps FollowUp[]

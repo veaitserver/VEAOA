@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, denyNotOwner, canAssignLeadOwner, type SessionUser } from "@/lib/permissions";
+import { canManageStudents, denyCrossCampus, denyNotOwner, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
 import { z } from "zod";
@@ -12,6 +12,7 @@ const updateSchema = z.object({
   publicSchool: z.string().nullable().optional(),
   salesId: z.string().nullable().optional(),
   campusId: z.string().optional(),
+  studentManagerId: z.string().nullable().optional(),
   postalCode: z.string().nullable().optional(),
   preferredContactApp: z.string().nullable().optional(),
   contactAppId: z.string().nullable().optional(),
@@ -34,6 +35,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       grade: true,
       campus: true,
       sales: { select: { id: true, name: true } },
+      studentManager: { select: { id: true, name: true } },
       leadInfo: { include: { campaign: { select: { name: true } } } },
       followUps: {
         include: { sales: { select: { name: true } } },
@@ -93,12 +95,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const {
-    salesId, contactAppId, postalCode, preferredContactApp,
+    salesId, studentManagerId, contactAppId, postalCode, preferredContactApp,
     sourceCategory, sourceDetail, subjectsOfInterest, status,
     ...rest
   } = parsed.data;
 
-  const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true, salesId: true } });
+  const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true, salesId: true, studentManagerId: true } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const denied = denyCrossCampus(sessionUser, existing.campusId);
@@ -109,6 +111,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   // 改归属销售只限校长/超管；销售不能把线索转给别人或抢过来。
   if (salesId !== undefined && salesId !== existing.salesId && !canAssignLeadOwner(sessionUser)) {
     return NextResponse.json({ error: "仅校长可分配/变更线索归属" }, { status: 403 });
+  }
+  // 分配/变更学管只限校长/超管。
+  if (studentManagerId !== undefined && studentManagerId !== existing.studentManagerId && !canAssignStudentManager(sessionUser)) {
+    return NextResponse.json({ error: "仅校长可分配/变更学管" }, { status: 403 });
   }
 
   // 迁校区要求对「迁出」和「迁入」两边都有权限，否则可以把学生推去自己看不到的校区。
@@ -122,6 +128,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     data: {
       ...rest,
       salesId: salesId ?? undefined,
+      ...(studentManagerId !== undefined ? { studentManagerId: studentManagerId || null } : {}),
       ...(postalCode !== undefined ? { postalCode: postalCode?.trim() || null } : {}),
       ...(preferredContactApp !== undefined ? { preferredContactApp: preferredContactApp || null } : {}),
       ...(contactAppId !== undefined ? { contactAppId: normalizeAppId(contactAppId) } : {}),
