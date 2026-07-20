@@ -33,8 +33,11 @@ export type ImportContext = {
   actorId?: string | null;             // 登录用户（CSV/手动），跟进记录归属兜底
   // 重复线索的处理：默认合并（批量导入语义）；手动逐条录入用 "reject"，即时报错不静默合并。
   onDuplicate?: "merge" | "reject";
-  // 指定归属销售（手动表单可手选）；有效则优先，无则走校区内轮询分配。
+  // 指定归属销售（手动表单可手选）；有效则优先。
   preferredOwnerId?: string | null;
+  // 是否自动分配负责人：默认 true（CSV/表单/API 轮询分配）；手动录入传 false，
+  // 未显式指定时留空，等校长在列表里手动（可批量）分配。
+  autoAssign?: boolean;
 };
 
 export type ImportOutcome =
@@ -87,10 +90,16 @@ function contactMethodOf(app: string | null | undefined): string {
  * 校区内轮询分配：优先 campaign 指定的默认负责人，否则在该校区活跃销售中
  * 取当前名下线索最少的一个（无持久游标的公平轮询），tie-break 用 id 保证确定性。
  */
+/** 校验某用户存在且在职，返回其 id，否则 null。 */
+async function validateActiveOwner(id: string): Promise<string | null> {
+  const o = await prisma.user.findUnique({ where: { id }, select: { id: true, isActive: true } });
+  return o?.isActive ? o.id : null;
+}
+
 async function pickOwner(campusId: string, defaultOwnerId: string | null): Promise<string | null> {
   if (defaultOwnerId) {
-    const o = await prisma.user.findUnique({ where: { id: defaultOwnerId }, select: { id: true, isActive: true } });
-    if (o?.isActive) return o.id;
+    const valid = await validateActiveOwner(defaultOwnerId);
+    if (valid) return valid;
   }
   const sales = await prisma.user.findMany({
     where: { isActive: true, roles: { some: { role: "SALES" } }, campuses: { some: { campusId } } },
@@ -206,7 +215,11 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
     }
 
     // ── 建档 ──
-    const ownerId = await pickOwner(campusId, campaign?.defaultOwnerId ?? ctx.preferredOwnerId ?? null);
+    const ownerHint = campaign?.defaultOwnerId ?? ctx.preferredOwnerId ?? null;
+    // 手动录入(autoAssign:false)：不轮询，仅在显式指定且有效时归属，否则留空待手动分配。
+    const ownerId = ctx.autoAssign === false
+      ? (ownerHint ? await validateActiveOwner(ownerHint) : null)
+      : await pickOwner(campusId, ownerHint);
     const authorId = await followUpAuthor(campusId, ownerId, ctx.actorId);
     const gradeId = input.gradeId ?? await resolveGradeId(input.grade);
 

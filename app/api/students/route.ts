@@ -113,7 +113,8 @@ export async function POST(req: Request) {
       sourceCategory, sourceDetail,
       postalCode: postalCode || null,
     },
-    { source: "MANUAL", campusId, actorId: sessionUser.id, onDuplicate: "reject", preferredOwnerId: salesId || null },
+    // 手动录入：不指定就留空，不轮询自动分配；由校长在列表里手动（可批量）分配。
+    { source: "MANUAL", campusId, actorId: sessionUser.id, onDuplicate: "reject", preferredOwnerId: salesId || null, autoAssign: false },
   );
 
   if (outcome.result === "REJECTED") {
