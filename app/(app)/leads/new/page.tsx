@@ -139,8 +139,8 @@ export default function NewLeadPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">来源明细</label>
-              <input value={form.sourceDetail} onChange={(e) => setForm({ ...form, sourceDetail: e.target.value })} placeholder="如 门店咨询 / 小红书" className={inputCls} />
+              <label className="block text-xs font-medium text-slate-600 mb-1">来源明细 *</label>
+              <input value={form.sourceDetail} onChange={(e) => setForm({ ...form, sourceDetail: e.target.value })} required placeholder="如 门店咨询 / 小红书" className={inputCls} />
             </div>
           </div>
 

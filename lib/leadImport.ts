@@ -18,6 +18,8 @@ export type LeadImportInput = {
   preferredContactApp?: string | null;
   contactAppId?: string | null;
   grade?: string | null;               // 年级名称（如 "Grade 9"），匹配已有 Grade，匹配不到留空
+  gradeId?: string | null;             // 已知 Grade id（后台表单下拉）时直接用，跳过名称容错
+  publicSchool?: string | null;
   subjectsOfInterest?: string | null;
   sourceCategory?: string | null;      // 无 campaign 时使用
   sourceDetail?: string | null;
@@ -26,9 +28,13 @@ export type LeadImportInput = {
 };
 
 export type ImportContext = {
-  source: "API" | "CSV" | "PUBLIC_FORM";
+  source: "API" | "CSV" | "PUBLIC_FORM" | "MANUAL";
   campusId?: string | null;            // 无 campaign 时必须由调用方提供（CSV=校长校区，API=显式）
-  actorId?: string | null;             // 登录用户（CSV），跟进记录归属兜底
+  actorId?: string | null;             // 登录用户（CSV/手动），跟进记录归属兜底
+  // 重复线索的处理：默认合并（批量导入语义）；手动逐条录入用 "reject"，即时报错不静默合并。
+  onDuplicate?: "merge" | "reject";
+  // 指定归属销售（手动表单可手选）；有效则优先，无则走校区内轮询分配。
+  preferredOwnerId?: string | null;
 };
 
 export type ImportOutcome =
@@ -195,15 +201,14 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
     const tomorrow = nextFollowUpDate(now);
 
     if (existing) {
+      if (ctx.onDuplicate === "reject") return reject("该手机号或联系方式已存在");
       return mergeInto(existing, sourceDetail, ctx, now, tomorrow, payload);
     }
 
     // ── 建档 ──
-    const ownerId = campaign?.defaultOwnerId
-      ? await pickOwner(campusId, campaign.defaultOwnerId)
-      : await pickOwner(campusId, null);
+    const ownerId = await pickOwner(campusId, campaign?.defaultOwnerId ?? ctx.preferredOwnerId ?? null);
     const authorId = await followUpAuthor(campusId, ownerId, ctx.actorId);
-    const gradeId = await resolveGradeId(input.grade);
+    const gradeId = input.gradeId ?? await resolveGradeId(input.grade);
 
     let studentId: string;
     try {
@@ -213,6 +218,7 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
             name: input.studentName.trim(),
             phone: normPhone,
             gradeId,
+            publicSchool: input.publicSchool?.trim() || null,
             campusId,
             salesId: ownerId,
             postalCode: input.postalCode?.trim() || null,
@@ -253,7 +259,10 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
           where: { OR: [{ phone: normPhone }, ...(normAppId ? [{ contactAppId: normAppId }] : [])] },
           include: { leadInfo: true },
         });
-        if (dup) return mergeInto(dup, sourceDetail, ctx, now, tomorrow, payload);
+        if (dup) {
+          if (ctx.onDuplicate === "reject") return reject("该手机号或联系方式已存在");
+          return mergeInto(dup, sourceDetail, ctx, now, tomorrow, payload);
+        }
       }
       throw e;
     }

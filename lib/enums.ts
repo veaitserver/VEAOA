@@ -54,6 +54,7 @@ export const ImportSource = {
   API: "API",
   CSV: "CSV",
   PUBLIC_FORM: "PUBLIC_FORM",
+  MANUAL: "MANUAL", // 后台手动逐条录入（与 CSV/表单共用导入核心）
 } as const;
 export type ImportSource = (typeof ImportSource)[keyof typeof ImportSource];
 

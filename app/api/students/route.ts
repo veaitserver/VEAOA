@@ -3,12 +3,12 @@ import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canManageStudents, denyCrossCampus, ownerFilter, type SessionUser } from "@/lib/permissions";
-import { normalizePhone, isValidPhone, normalizeAppId } from "@/lib/leadImport";
+import { importLead } from "@/lib/leadImport";
 import { deriveStage } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
 import { z } from "zod";
 
-// 与线索导入字段统一：来源用 sourceCategory/sourceDetail，另加联系方式/邮编/意向科目。
+// 与线索导入字段统一：来源用 sourceCategory/sourceDetail（明细必填），另加联系方式/邮编/意向科目。
 const createSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
@@ -19,8 +19,8 @@ const createSchema = z.object({
   postalCode: z.string().optional().nullable(),
   preferredContactApp: z.string().optional().nullable(),
   contactAppId: z.string().optional().nullable(),
-  sourceCategory: z.nativeEnum(SourceCategory).optional().nullable(),
-  sourceDetail: z.string().optional().nullable(),
+  sourceCategory: z.nativeEnum(SourceCategory),
+  sourceDetail: z.string().min(1, "请填写来源明细"),
   subjectsOfInterest: z.string().optional().nullable(),
 });
 
@@ -100,34 +100,30 @@ export async function POST(req: Request) {
   const denied = denyCrossCampus(sessionUser, campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
-  // 与导入一致：规范化并校验手机号（10 位）。
-  const normPhone = normalizePhone(phone);
-  if (!isValidPhone(normPhone)) {
-    return NextResponse.json({ error: "电话号码格式不正确：需为 10 位加拿大手机号" }, { status: 400 });
+  // 手动逐条录入与 CSV/公开表单共用同一导入核心（规范化/去重/年级容错/轮询分配/次日回访/导入日志）。
+  // 唯一差异：手动重复即报错（onDuplicate: "reject"），不静默合并，符合归属隔离与即时反馈。
+  const outcome = await importLead(
+    {
+      studentName: name, phone,
+      gradeId: gradeId || null,
+      publicSchool: publicSchool || null,
+      preferredContactApp: preferredContactApp || null,
+      contactAppId: contactAppId || null,
+      subjectsOfInterest: subjectsOfInterest || null,
+      sourceCategory, sourceDetail,
+      postalCode: postalCode || null,
+    },
+    { source: "MANUAL", campusId, actorId: sessionUser.id, onDuplicate: "reject", preferredOwnerId: salesId || null },
+  );
+
+  if (outcome.result === "REJECTED") {
+    const status = outcome.reason.includes("已存在") ? 409 : 400;
+    return NextResponse.json({ error: outcome.reason }, { status });
   }
 
-  const existing = await prisma.student.findUnique({ where: { phone: normPhone } });
-  if (existing) return NextResponse.json({ error: "该手机号已存在" }, { status: 409 });
-
-  const cat = sourceCategory ?? "OTHER";
-  const student = await prisma.student.create({
-    data: {
-      name, phone: normPhone, gradeId: gradeId || null, publicSchool: publicSchool || null, campusId,
-      salesId: salesId || null,
-      postalCode: postalCode?.trim() || null,
-      preferredContactApp: preferredContactApp || null,
-      contactAppId: normalizeAppId(contactAppId),
-      // 新建即线索：状态 NEW，来源统一到 sourceCategory/sourceDetail。
-      leadInfo: {
-        create: {
-          source: cat, status: "NEW", sourceCategory: cat,
-          sourceDetail: sourceDetail?.trim() || null,
-          subjectsOfInterest: subjectsOfInterest?.trim() || null,
-        },
-      },
-    },
+  const student = await prisma.student.findUnique({
+    where: { id: outcome.studentId },
     include: { grade: true, campus: true },
   });
-
   return NextResponse.json(student, { status: 201 });
 }
