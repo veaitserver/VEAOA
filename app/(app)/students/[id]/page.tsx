@@ -46,12 +46,12 @@ type Lesson = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  PENDING_APPROVAL: "待确认", ACTIVE: "已激活", FINANCE_LOCK: "财务锁定",
+  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效",
 };
 const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",
+  PENDING_FINANCE: "bg-orange-100 text-orange-700",
   ACTIVE: "bg-green-100 text-green-700",
-  FINANCE_LOCK: "bg-red-100 text-red-700",
 };
 
 export default function StudentDetailPage({ params }: { params: Promise<{ id: string }> }) {

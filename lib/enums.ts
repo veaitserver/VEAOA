@@ -70,12 +70,11 @@ export const ContactMethod = {
 } as const;
 export type ContactMethod = (typeof ContactMethod)[keyof typeof ContactMethod];
 
-// 课包审批两步：待审批 → 校长确认(待财务) → 财务确认(生效 ACTIVE)。
+// 课包审批两步：待校长确认 → 待财务确认 → 已生效(ACTIVE)。生效后才能排课。
 export const PackageStatus = {
   PENDING_APPROVAL: "PENDING_APPROVAL", // 待校长确认
   PENDING_FINANCE: "PENDING_FINANCE",   // 校长已确认，待财务确认
   ACTIVE: "ACTIVE",                     // 财务确认，正式生效
-  FINANCE_LOCK: "FINANCE_LOCK",         // 财务锁定（近结课/审计）
 } as const;
 export type PackageStatus = (typeof PackageStatus)[keyof typeof PackageStatus];
 
@@ -83,7 +82,6 @@ export const PACKAGE_STATUS_LABELS: Record<string, string> = {
   PENDING_APPROVAL: "待校长确认",
   PENDING_FINANCE: "待财务确认",
   ACTIVE: "已生效",
-  FINANCE_LOCK: "财务锁定",
 };
 
 export const LessonType = {

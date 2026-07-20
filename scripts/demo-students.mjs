@@ -111,16 +111,16 @@ async function main() {
         },
       },
     });
-    // kind: "active"(在读) / "consumed"(已结课-课时耗尽) / "locked"(已结课-财务锁定)
+    // kind: "active"(在读，有剩余) / "consumed"(已结课，课时耗尽)。均为已生效 ACTIVE。
     const totalHours = 40;
     const remaining = kind === "active" ? 20 + (i % 15) : 0;
-    const status = kind === "locked" ? "FINANCE_LOCK" : "ACTIVE";
     await prisma.coursePackage.create({
       data: {
         studentId: student.id, gradeId: grades[gradeName], subjectId: subjects[subjectName],
         totalHours, pricePerHour: 100, totalAmount: totalHours * 100,
-        remainingHours: remaining, status,
+        remainingHours: remaining, status: "ACTIVE",
         createdById: admin.id, confirmedById: admin.id, confirmedAt: new Date(),
+        financeConfirmedById: admin.id, financeConfirmedAt: new Date(),
       },
     });
     return student;
@@ -136,9 +136,9 @@ async function main() {
   for (let i = 0; i < 4; i++) { await makeLead({ name: `${PREFIX}已流失${i + 1}`, i, status: "LOST" }); created.LOST++; }
   // 在读 ×8（有剩余课时的生效课包）
   for (let i = 0; i < 8; i++) { await makeStudentWithPackage({ name: `${PREFIX}在读${i + 1}`, i, kind: "active" }); created.ENROLLED++; }
-  // 已结课 ×6（3 个课时耗尽 + 3 个财务锁定）
+  // 已结课 ×6（生效课包课时耗尽）
   for (let i = 0; i < 6; i++) {
-    await makeStudentWithPackage({ name: `${PREFIX}已结课${i + 1}`, i, kind: i < 3 ? "consumed" : "locked" });
+    await makeStudentWithPackage({ name: `${PREFIX}已结课${i + 1}`, i, kind: "consumed" });
     created.COMPLETED++;
   }
 

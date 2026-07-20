@@ -47,10 +47,9 @@ export async function GET(req: Request) {
     { name: { contains: search } },
     { phone: { contains: search } },
   ];
-  // 学生/线索划分下推到 DB（已确认课包 = ACTIVE/FINANCE_LOCK），便于分页。
-  const CONFIRMED = ["ACTIVE", "FINANCE_LOCK"];
-  if (status === "enrolled") where.packages = { some: { status: { in: CONFIRMED } } };
-  else if (status === "lead") where.packages = { none: { status: { in: CONFIRMED } } };
+  // 学生/线索划分下推到 DB（已生效课包 = ACTIVE），便于分页。
+  if (status === "enrolled") where.packages = { some: { status: "ACTIVE" } };
+  else if (status === "lead") where.packages = { none: { status: "ACTIVE" } };
   if (leadStatus) where.leadInfo = { status: leadStatus };
 
   const include = {

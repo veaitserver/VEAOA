@@ -505,7 +505,7 @@ async function main() {
     },
   });
 
-  // Scarborough — ACTIVE + FINANCE_LOCK
+  // Scarborough — 已生效且课时耗尽（已结课示例）
   await prisma.coursePackage.upsert({
     where: { id: "pkg-scar-1" },
     update: {},
@@ -517,12 +517,14 @@ async function main() {
       totalHours: 40,
       pricePerHour: 90,
       totalAmount: 3600,
-      remainingHours: 12,
-      status: "FINANCE_LOCK",
+      remainingHours: 0,
+      status: "ACTIVE",
       createdById: salesScar.id,
       confirmedById: "user-finance",
       confirmedAt: new Date("2026-01-15"),
-      notes: "Near completion, locked for audit",
+      financeConfirmedById: "user-finance",
+      financeConfirmedAt: new Date("2026-01-16"),
+      notes: "已结课",
     },
   });
   await prisma.coursePackage.upsert({
