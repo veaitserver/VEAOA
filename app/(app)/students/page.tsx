@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
 import { sourceShort, stageLabel, STAGE_COLORS, type LeadInfo } from "@/lib/leadLabels";
+import Pagination from "@/components/Pagination";
 
 type Student = {
   id: string; name: string; phone: string; stage: string;
@@ -17,18 +18,25 @@ export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   // 学生管理只看已转化的在读学生；未转化的线索在「线索客户管理」。
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ status: "enrolled" });
+    const params = new URLSearchParams({ status: "enrolled", page: String(page) });
     if (search) params.set("search", search);
     const res = await fetch(`/api/students?${params}`);
-    if (res.ok) setStudents(await res.json());
+    if (res.ok) {
+      const d = await res.json();
+      setStudents(d.items); setTotal(d.total); setTotalPages(d.totalPages);
+    }
     setLoading(false);
-  }, [search]);
+  }, [search, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [search]);
 
   return (
     <div className="space-y-6">
@@ -91,6 +99,7 @@ export default function StudentsPage() {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} />
     </div>
   );
 }

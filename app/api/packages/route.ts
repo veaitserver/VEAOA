@@ -21,6 +21,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
   const studentId = searchParams.get("studentId");
+  const page = Number(searchParams.get("page")) || 0;
 
   const sessionUser = session.user as SessionUser;
 
@@ -34,19 +35,25 @@ export async function GET(req: Request) {
   if (owner) studentWhere.salesId = owner.salesId; // 销售只看自己名下学生的课包
   if (Object.keys(studentWhere).length) where.student = studentWhere;
 
-  const packages = await prisma.coursePackage.findMany({
-    where,
-    include: {
-      student: { select: { id: true, name: true, campusId: true } },
-      grade: true,
-      subject: true,
-      creator: { select: { name: true } },
-      confirmer: { select: { name: true } },
-      deductions: { where: { reversedAt: null }, select: { hoursDeducted: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const include = {
+    student: { select: { id: true, name: true, campusId: true } },
+    grade: true,
+    subject: true,
+    creator: { select: { name: true } },
+    confirmer: { select: { name: true } },
+    deductions: { where: { reversedAt: null }, select: { hoursDeducted: true } },
+  } as const;
 
+  if (page >= 1) {
+    const pageSize = 20;
+    const [items, total] = await prisma.$transaction([
+      prisma.coursePackage.findMany({ where, include, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+      prisma.coursePackage.count({ where }),
+    ]);
+    return NextResponse.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  }
+
+  const packages = await prisma.coursePackage.findMany({ where, include, orderBy: { createdAt: "desc" } });
   return NextResponse.json(packages);
 }
 

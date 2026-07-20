@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canManageStudents, denyCrossCampus, ownerFilter, type SessionUser } from "@/lib/permissions";
 import { normalizePhone, isValidPhone, normalizeAppId } from "@/lib/leadImport";
-import { deriveStage, FUNNEL_STAGES } from "@/lib/leadLabels";
+import { deriveStage } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
 import { z } from "zod";
 
@@ -30,7 +31,9 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const campusId = searchParams.get("campusId");
   const search = searchParams.get("search") ?? "";
-  const status = searchParams.get("status"); // "lead" | "enrolled" | null
+  const status = searchParams.get("status");        // "lead" | "enrolled" | null
+  const leadStatus = searchParams.get("leadStatus"); // 线索漏斗子筛选：NEW/CONTACTED/LOST
+  const page = Number(searchParams.get("page")) || 0; // >=1 时分页并返回信封
 
   const sessionUser = session.user as SessionUser;
 
@@ -44,31 +47,38 @@ export async function GET(req: Request) {
     { name: { contains: search } },
     { phone: { contains: search } },
   ];
+  // 学生/线索划分下推到 DB（已确认课包 = ACTIVE/FINANCE_LOCK），便于分页。
+  const CONFIRMED = ["ACTIVE", "FINANCE_LOCK"];
+  if (status === "enrolled") where.packages = { some: { status: { in: CONFIRMED } } };
+  else if (status === "lead") where.packages = { none: { status: { in: CONFIRMED } } };
+  if (leadStatus) where.leadInfo = { status: leadStatus };
 
-  const students = await prisma.student.findMany({
-    where,
-    include: {
-      grade: true,
-      campus: true,
-      sales: { select: { id: true, name: true } },
-      leadInfo: true,
-      // 取全部课包用于派生阶段（在读/已结课），不只 ACTIVE。
-      packages: { select: { remainingHours: true, status: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const include = {
+    grade: true,
+    campus: true,
+    sales: { select: { id: true, name: true } },
+    leadInfo: true,
+    packages: { select: { remainingHours: true, status: true } },
+  } satisfies Prisma.StudentInclude;
+  type StudentRow = Prisma.StudentGetPayload<{ include: typeof include }>;
+  const shape = (rows: StudentRow[]) =>
+    rows.map((s) => {
+      const stage = deriveStage(s.packages, s.leadInfo);
+      return { ...s, stage, isEnrolled: stage === "ENROLLED" };
+    });
 
-  const enriched = students.map(s => {
-    const stage = deriveStage(s.packages, s.leadInfo);
-    return { ...s, stage, isEnrolled: stage === "ENROLLED" };
-  }).filter(s => {
-    // 线索客户 = 纯线索（漏斗态）；学生 = 已开过课包（在读/已结课）
-    if (status === "lead") return FUNNEL_STAGES.includes(s.stage as typeof FUNNEL_STAGES[number]);
-    if (status === "enrolled") return s.stage === "ENROLLED" || s.stage === "COMPLETED";
-    return true;
-  });
+  if (page >= 1) {
+    const pageSize = 20;
+    const [rows, total] = await prisma.$transaction([
+      prisma.student.findMany({ where, include, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+      prisma.student.count({ where }),
+    ]);
+    return NextResponse.json({ items: shape(rows), total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  }
 
-  return NextResponse.json(enriched);
+  // 无 page（如下拉搜索）：返回数组，保持向后兼容。
+  const rows = await prisma.student.findMany({ where, include, orderBy: { createdAt: "desc" } });
+  return NextResponse.json(shape(rows));
 }
 
 export async function POST(req: Request) {

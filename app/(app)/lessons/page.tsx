@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { formatDate, formatTime } from "@/lib/utils";
 import { isDeductionLocked } from "@/lib/lock";
+import Pagination from "@/components/Pagination";
 
 type Lesson = {
   id: string; startTime: string; endTime: string; lessonType: string;
@@ -52,6 +53,9 @@ export default function LessonsPage() {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [logModal, setLogModal] = useState<{ lessonId: string } | null>(null);
   const [logForm, setLogForm] = useState({ subjectId: "", notes: "" });
   const [error, setError] = useState("");
@@ -64,12 +68,16 @@ export default function LessonsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const { start, end } = monthRange(month);
-    const res = await fetch(`/api/lessons?phase=${phase}&start=${start}&end=${end}`);
-    if (res.ok) setLessons(await res.json());
+    const res = await fetch(`/api/lessons?phase=${phase}&start=${start}&end=${end}&page=${page}`);
+    if (res.ok) {
+      const d = await res.json();
+      setLessons(d.items); setTotal(d.total); setTotalPages(d.totalPages);
+    }
     setLoading(false);
-  }, [phase, month]);
+  }, [phase, month, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [phase, month]);
 
   useEffect(() => {
     fetch("/api/admin/subjects").then(r => r.json()).then(setSubjects);
@@ -211,6 +219,7 @@ export default function LessonsPage() {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} />
 
       {/* Log submission modal */}
       {logModal && (

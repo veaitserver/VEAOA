@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { Role } from "@/lib/enums";
@@ -45,36 +46,40 @@ export async function GET(req: Request) {
     where.startTime = timeRange;
   }
 
-  const lessons = await prisma.scheduledLesson.findMany({
-    where,
-    include: {
-      teacher: { select: { id: true, name: true } },
-      student: { select: { id: true, name: true } },
-      classroom: { select: { name: true } },
-      package: { include: { subject: true } },
-      log: {
-        include: {
-          subject: true,
-          confirmer: { select: { name: true } },
-          deductions: {
-            include: { reverser: { select: { name: true } } },
-            orderBy: { createdAt: "desc" },
-          },
-        },
+  const page = Number(searchParams.get("page")) || 0;
+  const include = {
+    teacher: { select: { id: true, name: true } },
+    student: { select: { id: true, name: true } },
+    classroom: { select: { name: true } },
+    package: { include: { subject: true } },
+    log: {
+      include: {
+        subject: true,
+        confirmer: { select: { name: true } },
+        deductions: { include: { reverser: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
       },
     },
-    orderBy: { startTime: "desc" },
-    take: 100,
-  });
+  } satisfies Prisma.ScheduledLessonInclude;
 
-  // 前端只关心「当前生效」的那条扣课记录：优先未撤销的，否则取最近一条。
-  // 把一对多压平成单个 deduction，保持客户端契约不变。
-  const shaped = lessons.map((l) => {
-    if (!l.log) return l;
-    const { deductions, ...log } = l.log;
-    const current = deductions.find((d) => !d.reversedAt) ?? deductions[0] ?? null;
-    return { ...l, log: { ...log, deduction: current } };
-  });
+  // 前端只关心「当前生效」的那条扣课记录：优先未撤销的，否则取最近一条。压平成单个 deduction。
+  type LessonRow = Prisma.ScheduledLessonGetPayload<{ include: typeof include }>;
+  const shape = (rows: LessonRow[]) =>
+    rows.map((l) => {
+      if (!l.log) return l;
+      const { deductions, ...log } = l.log;
+      const current = deductions.find((d) => !d.reversedAt) ?? deductions[0] ?? null;
+      return { ...l, log: { ...log, deduction: current } };
+    });
 
-  return NextResponse.json(shaped);
+  if (page >= 1) {
+    const pageSize = 20;
+    const [rows, total] = await prisma.$transaction([
+      prisma.scheduledLesson.findMany({ where, include, orderBy: { startTime: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+      prisma.scheduledLesson.count({ where }),
+    ]);
+    return NextResponse.json({ items: shape(rows), total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  }
+
+  const lessons = await prisma.scheduledLesson.findMany({ where, include, orderBy: { startTime: "desc" }, take: 100 });
+  return NextResponse.json(shape(lessons));
 }

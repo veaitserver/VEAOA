@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatMoney, formatRate } from "@/lib/utils";
+import Pagination from "@/components/Pagination";
 
 type Package = {
   id: string; status: string; totalHours: string; remainingHours: string;
@@ -27,16 +28,24 @@ export default function PackagesPage() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
-    const params = filter ? `?status=${filter}` : "";
-    const res = await fetch(`/api/packages${params}`);
-    if (res.ok) setPackages(await res.json());
+    const params = new URLSearchParams({ page: String(page) });
+    if (filter) params.set("status", filter);
+    const res = await fetch(`/api/packages?${params}`);
+    if (res.ok) {
+      const d = await res.json();
+      setPackages(d.items); setTotal(d.total); setTotalPages(d.totalPages);
+    }
     setLoading(false);
-  }
+  }, [filter, page]);
 
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [filter]);
 
   return (
     <div className="space-y-6">
@@ -94,6 +103,7 @@ export default function PackagesPage() {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} />
     </div>
   );
 }

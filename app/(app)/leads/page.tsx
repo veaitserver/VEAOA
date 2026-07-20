@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatPhone } from "@/lib/utils";
 import { sourceShort, stageLabel, STAGE_COLORS, CONTACT_APP_LABELS, type LeadInfo } from "@/lib/leadLabels";
+import Pagination from "@/components/Pagination";
 
 type Lead = {
   id: string; name: string; phone: string; stage: string;
@@ -23,20 +24,27 @@ export default function LeadsPage() {
   const [statusTab, setStatusTab] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ status: "lead" });
+    const params = new URLSearchParams({ status: "lead", page: String(page) });
     if (search) params.set("search", search);
+    if (statusTab !== "all") params.set("leadStatus", statusTab);
     const res = await fetch(`/api/students?${params}`);
-    const data: Lead[] = res.ok ? await res.json() : [];
-    setLeads(data);
+    if (res.ok) {
+      const d = await res.json();
+      setLeads(d.items); setTotal(d.total); setTotalPages(d.totalPages);
+    }
     setLoading(false);
-  }, [search]);
+  }, [search, statusTab, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [search, statusTab]);
 
-  const visible = leads.filter((l) => statusTab === "all" || l.stage === statusTab);
+  const visible = leads;
 
   return (
     <div className="space-y-6">
@@ -106,6 +114,7 @@ export default function LeadsPage() {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} />
     </div>
   );
 }
