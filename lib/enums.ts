@@ -85,6 +85,18 @@ export const PACKAGE_STATUS_LABELS: Record<string, string> = {
   ACTIVE: "已生效",
 };
 
+// 签约类型：学生首张课包为新签（销售从线索成交），之后均为续费（由学管负责）。
+export const SigningType = {
+  NEW_SIGN: "NEW_SIGN", // 新签
+  RENEWAL: "RENEWAL",   // 续费
+} as const;
+export type SigningType = (typeof SigningType)[keyof typeof SigningType];
+
+export const SIGNING_TYPE_LABELS: Record<string, string> = {
+  NEW_SIGN: "新签",
+  RENEWAL: "续费",
+};
+
 export const LessonType = {
   ONE_ON_ONE: "ONE_ON_ONE",
   GROUP: "GROUP",

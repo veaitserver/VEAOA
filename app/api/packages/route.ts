@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canCreatePackage, denyCrossCampus, denyNotOwner, ownerFilter, type SessionUser } from "@/lib/permissions";
+import { campusScope, canCreatePackage, canCreateNewSignPackage, canCreateRenewalPackage, denyCrossCampus, denyNotOwner, ownerFilter, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -81,11 +81,28 @@ export async function POST(req: Request) {
   // 且 createdById 记的是自己 —— 销售报表会把提成算到攻击者头上。
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { campusId: true, salesId: true },
+    select: { campusId: true, salesId: true, studentManagerId: true },
   });
   if (!student) return NextResponse.json({ error: "学生不存在" }, { status: 404 });
-  const denied = denyCrossCampus(sessionUser, student.campusId) ?? denyNotOwner(sessionUser, student.salesId);
+  const denied = denyCrossCampus(sessionUser, student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 签约类型：学生已有课包 → 续费，否则 → 新签。据此分权：
+  // 新签由销售(归属本人)/校长/超管；续费由该生学管或校长/超管，销售首签后不能再建。
+  const existingCount = await prisma.coursePackage.count({ where: { studentId } });
+  const isRenewal = existingCount > 0;
+  if (isRenewal) {
+    if (!canCreateRenewalPackage(sessionUser, student.studentManagerId)) {
+      return NextResponse.json({ error: "该学生已签约，续费课包由其学管或校长创建，销售不能再添加" }, { status: 403 });
+    }
+  } else {
+    if (!canCreateNewSignPackage(sessionUser)) {
+      return NextResponse.json({ error: "新签课包由销售或校长创建" }, { status: 403 });
+    }
+    // 新签的销售必须是该学生的归属销售（管理层不受此限）。
+    const notOwner = denyNotOwner(sessionUser, student.salesId);
+    if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
+  }
 
   const pkg = await prisma.coursePackage.create({
     data: {
@@ -99,6 +116,7 @@ export async function POST(req: Request) {
       notes,
       createdById: sessionUser.id,
       status: "PENDING_APPROVAL",
+      signingType: isRenewal ? "RENEWAL" : "NEW_SIGN",
     },
     include: {
       student: { select: { name: true } },

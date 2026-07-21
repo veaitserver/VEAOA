@@ -97,8 +97,26 @@ export function canEditPendingPackage(user: SessionUser | null | undefined): boo
   return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+/** 谁有资格进入建课包流程；具体新签/续费再按 canCreateNewSignPackage/canCreateRenewalPackage 细分。 */
 export function canCreatePackage(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.STUDENT_MANAGER, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 新签（学生首张课包）：销售从线索成交、或校长/超管。学管不建新签。 */
+export function canCreateNewSignPackage(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/**
+ * 续费（学生已有课包后的后续课包）：由该生被分配的学管负责；校长/超管可兜底。
+ * 销售在学生首签后不能再建课包。
+ */
+export function canCreateRenewalPackage(
+  user: SessionUser | null | undefined,
+  studentManagerId: string | null | undefined,
+): boolean {
+  if (hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN)) return true;
+  return hasRole(user, Role.STUDENT_MANAGER) && !!studentManagerId && user?.id === studentManagerId;
 }
 
 /** 建档、改档、写跟进记录。老师只上课不碰学生档案，财务/HR 同理。 */

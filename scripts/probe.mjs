@@ -695,6 +695,52 @@ async function run() {
   await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: lockPkg.id } } });
   await prisma.scheduledLesson.deleteMany({ where: { packageId: lockPkg.id } });
   await prisma.coursePackage.delete({ where: { id: lockPkg.id } });
+
+  // ── 阶段 9：签约类型与续费权限（新签销售建，续费学管/校长建，销售首签后锁定）──
+  console.log("\n阶段 9 — 签约类型与续费权限");
+  const signPhone = "6470009901";
+  await prisma.coursePackage.deleteMany({ where: { student: { phone: signPhone } } });
+  await prisma.followUp.deleteMany({ where: { student: { phone: signPhone } } });
+  await prisma.lead.deleteMany({ where: { student: { phone: signPhone } } });
+  await prisma.student.deleteMany({ where: { phone: signPhone } });
+  const signStudent = await prisma.student.create({
+    data: {
+      name: "签约-Probe", phone: signPhone, campusId: "campus-markham",
+      gradeId: fx.grade.id, salesId: mkmSales.session.user.id,
+      leadInfo: { create: { source: "OTHER", status: "NEW" } },
+    },
+  });
+  const pkgBody = { studentId: signStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id, totalHours: 10, pricePerHour: 100, totalAmount: 1000 };
+
+  const newSign = await mkmSales.req("POST", "/api/packages", pkgBody);
+  check(9, "销售建首张课包为新签(NEW_SIGN)", newSign.status === 201 && newSign.body.signingType === "NEW_SIGN",
+    `HTTP ${newSign.status}，类型 ${newSign.body?.signingType}`);
+
+  const salesRenew = await mkmSales.req("POST", "/api/packages", pkgBody);
+  check(9, "学生已签约后销售不能再建课包", salesRenew.status === 403, `实际 ${salesRenew.status}`);
+
+  // 分配 Markham 学管（Grace）后，学管可建续费
+  await prisma.student.update({ where: { id: signStudent.id }, data: { studentManagerId: "user-sm-mkm" } });
+  const smClient = new Client("Markham 学管"); await smClient.login("6470000011", "sm123");
+  const smRenew = await smClient.req("POST", "/api/packages", pkgBody);
+  check(9, "被分配学管可建续费(RENEWAL)", smRenew.status === 201 && smRenew.body.signingType === "RENEWAL",
+    `HTTP ${smRenew.status}，类型 ${smRenew.body?.signingType}`);
+
+  // 取消分配后，同一学管不能再建续费（必须是被分配的那位）
+  await prisma.student.update({ where: { id: signStudent.id }, data: { studentManagerId: null } });
+  const smUnassigned = await smClient.req("POST", "/api/packages", pkgBody);
+  check(9, "未被分配的学管不能建续费", smUnassigned.status === 403, `实际 ${smUnassigned.status}`);
+
+  // 校长兜底可建续费
+  const pRenew = await mkmPrincipal.req("POST", "/api/packages", pkgBody);
+  check(9, "校长可兜底建续费", pRenew.status === 201 && pRenew.body.signingType === "RENEWAL",
+    `HTTP ${pRenew.status}，类型 ${pRenew.body?.signingType}`);
+
+  // 清理
+  await prisma.coursePackage.deleteMany({ where: { studentId: signStudent.id } });
+  await prisma.followUp.deleteMany({ where: { studentId: signStudent.id } });
+  await prisma.lead.deleteMany({ where: { studentId: signStudent.id } });
+  await prisma.student.delete({ where: { id: signStudent.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -710,7 +756,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

@@ -4,15 +4,21 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatMoney, formatRate } from "@/lib/utils";
 import { isDepleted, isLowOnHours } from "@/lib/hours";
+import { SIGNING_TYPE_LABELS } from "@/lib/enums";
 import Pagination from "@/components/Pagination";
 
 type Package = {
-  id: string; status: string; totalHours: string; remainingHours: string;
+  id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
   pricePerHour: string; totalAmount: string; createdAt: string;
   student: { id: string; name: string };
   grade: { name: string }; subject: { name: string };
   creator: { name: string }; confirmer: { name: string } | null;
   deductions: { hoursDeducted: string }[];
+};
+
+const SIGNING_COLORS: Record<string, string> = {
+  NEW_SIGN: "bg-blue-100 text-blue-700",
+  RENEWAL: "bg-purple-100 text-purple-700",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -86,7 +92,12 @@ export default function PackagesPage() {
                 <td className="px-4 py-3 text-sm font-medium text-slate-800">
                   <Link href={`/students/${p.student.id}`} className="hover:text-blue-600">{p.student.name}</Link>
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-600">{p.grade.name} · {p.subject.name}</td>
+                <td className="px-4 py-3 text-sm text-slate-600">
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium mr-1.5 ${SIGNING_COLORS[p.signingType] ?? "bg-slate-100 text-slate-600"}`}>
+                    {SIGNING_TYPE_LABELS[p.signingType] ?? p.signingType}
+                  </span>
+                  {p.grade.name} · {p.subject.name}
+                </td>
                 <td className="px-4 py-3 text-sm text-slate-500 font-mono text-xs">
                   {Number(p.totalHours).toFixed(1)}h × {formatRate(p.pricePerHour)} = {formatMoney(p.totalAmount)}
                 </td>

@@ -7,6 +7,7 @@ import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from
 import {
   sourceCategoryLabel, deriveStage, stageLabel, STAGE_COLORS, FUNNEL_STAGES, CONTACT_APP_LABELS, type LeadInfo,
 } from "@/lib/leadLabels";
+import { SIGNING_TYPE_LABELS } from "@/lib/enums";
 
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
@@ -31,7 +32,7 @@ type FollowUp = {
 };
 
 type Package = {
-  id: string; status: string; totalHours: string; remainingHours: string;
+  id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
   pricePerHour: string; totalAmount: string;
   grade: { name: string }; subject: { name: string };
   creator: { name: string }; confirmer: { name: string } | null;
@@ -114,6 +115,14 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   const activePackages = student.packages.filter(p => p.status === "ACTIVE");
   const stage = deriveStage(student.packages, student.leadInfo);
   const isFunnel = FUNNEL_STAGES.includes(stage as typeof FUNNEL_STAGES[number]);
+
+  // 建课包权限（与后端一致）：首张=新签(销售归属本人/校长/超管)，之后=续费(该生学管/校长/超管)。
+  const myId = (session?.user as { id?: string } | undefined)?.id ?? "";
+  const isAdmin = roles.includes("PRINCIPAL") || roles.includes("SUPER_ADMIN");
+  const hasPackage = student.packages.length > 0;
+  const canCreatePkg = hasPackage
+    ? (isAdmin || (roles.includes("STUDENT_MANAGER") && student.studentManager?.id === myId))
+    : (isAdmin || (roles.includes("SALES") && student.sales?.id === myId));
   const scheduledHours = student.lessons
     .filter(l => !l.log?.deduction)
     .reduce((sum, l) => {
@@ -190,9 +199,15 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
             </div>
           )}
           <div className="pt-2 flex items-center gap-3">
-            <Link href={`/packages/new?studentId=${student.id}`} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 inline-block">
-              + 新建课包
-            </Link>
+            {canCreatePkg && (
+              <Link href={`/packages/new?studentId=${student.id}`} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 inline-block">
+                {hasPackage ? "+ 新建续费课包" : "+ 新建课包"}
+              </Link>
+            )}
+            {/* 销售看到自己名下已签约学生：说明续费不再由销售负责 */}
+            {!canCreatePkg && hasPackage && roles.includes("SALES") && (
+              <span className="text-xs text-slate-400">该学生已签约，续费课包由学管负责</span>
+            )}
             {/* 线索漏斗状态操作：仅纯线索显示（已结课/在读不显示） */}
             {isFunnel && student.leadInfo && (
               stage === "LOST" ? (
@@ -249,7 +264,12 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               <tbody className="divide-y divide-slate-100">
                 {student.packages.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 text-sm font-medium text-slate-800">{p.grade.name} · {p.subject.name}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-slate-800">
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium mr-1.5 ${p.signingType === "RENEWAL" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                        {SIGNING_TYPE_LABELS[p.signingType] ?? p.signingType}
+                      </span>
+                      {p.grade.name} · {p.subject.name}
+                    </td>
                     <td className="px-4 py-3 text-sm text-slate-500">{p.totalHours}h / {formatRate(p.pricePerHour)} / {formatMoney(p.totalAmount)}</td>
                     <td className="px-4 py-3 text-sm text-slate-800">{Number(p.remainingHours).toFixed(1)}h</td>
                     <td className="px-4 py-3">

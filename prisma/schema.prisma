@@ -179,6 +179,7 @@ model CoursePackage {
   totalAmount    Float
   remainingHours Float
   status         String    @default("PENDING_APPROVAL")
+  signingType    String    @default("NEW_SIGN") // 签约类型：新签 NEW_SIGN / 续费 RENEWAL（首张新签，之后续费）
   createdById    String
   confirmedById  String?    // 校长确认人
   confirmedAt    DateTime?

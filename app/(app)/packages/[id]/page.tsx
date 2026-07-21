@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils";
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
+import { SIGNING_TYPE_LABELS } from "@/lib/enums";
 
 type Package = {
-  id: string; status: string; totalHours: string; remainingHours: string;
+  id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
   pricePerHour: string; totalAmount: string; notes?: string; createdAt: string;
   confirmedAt?: string; financeConfirmedAt?: string;
   student: { id: string; name: string; campusId: string };
@@ -101,6 +102,9 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         <h1 className="text-2xl font-bold text-slate-800">课包详情</h1>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[pkg.status]}`}>
           {STATUS_LABELS[pkg.status]}
+        </span>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pkg.signingType === "RENEWAL" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+          {SIGNING_TYPE_LABELS[pkg.signingType] ?? pkg.signingType}
         </span>
       </div>
 
