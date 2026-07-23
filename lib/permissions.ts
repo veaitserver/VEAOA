@@ -59,6 +59,15 @@ export function canManageUsers(user: SessionUser | null | undefined): boolean {
 }
 
 /**
+ * 非超管（HR）可授予的角色白名单：只能授予运营类角色。
+ * 校长/财务/HR/超管这类具备审批或人事权的角色只能由超管授予，
+ * 否则 HR 能给自己或他人加校长+财务，打穿「校长确认→财务确认」的双人复核。
+ */
+export const HR_GRANTABLE_ROLES: Role[] = [
+  Role.SALES, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.STUDENT_MANAGER,
+];
+
+/**
  * canManageUsers 对 HR 和超管一视同仁，但 HR 不该能造出比自己更大的权限。
  * 校验操作者是否有权授予这批 roles/campusIds，返回 null 表示放行。
  */
@@ -67,10 +76,25 @@ export function checkUserGrant(
   grant: { roles?: Role[]; campusIds?: string[] },
 ): string | null {
   if (isSuperAdmin(actor)) return null;
-  if (grant.roles?.includes(Role.SUPER_ADMIN)) return "仅超管可授予超级管理员角色";
+  // 白名单校验：黑名单（只挡超管）会漏掉校长/财务/HR，导致自我提权。
+  const disallowed = grant.roles?.filter((r) => !HR_GRANTABLE_ROLES.includes(r));
+  if (disallowed?.length) return "仅超管可授予校长/财务/HR/超管角色";
   const outside = grant.campusIds?.filter((c) => !hasCampusAccess(actor, c));
   if (outside?.length) return "不能授予自己无权管理的校区";
   return null;
+}
+
+/**
+ * 非超管操作某用户时，双方是否有共同校区。防止 HR 跨校区改密码/停用/改角色，
+ * 从而接管别校区的校长/财务账号。返回 true 表示允许操作该目标。
+ */
+export function sharesCampusWith(
+  actor: SessionUser | null | undefined,
+  targetCampusIds: string[],
+): boolean {
+  if (isSuperAdmin(actor)) return true;
+  if (!actor) return false;
+  return targetCampusIds.some((c) => actor.campusIds.includes(c));
 }
 
 export function canConfirmPackage(user: SessionUser | null | undefined): boolean {

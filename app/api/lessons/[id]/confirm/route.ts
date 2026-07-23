@@ -41,6 +41,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   const durationHours = lessonHours(lesson.startTime, lesson.endTime);
+  // 纵深防御：非正时长的课绝不核销，否则 decrement 负数会给课包倒增课时。
+  if (!(durationHours > 0)) {
+    return NextResponse.json({ error: "课程时长非法，无法核销" }, { status: 400 });
+  }
   const log = lesson.log;
 
   try {

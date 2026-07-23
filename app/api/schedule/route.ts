@@ -13,7 +13,16 @@ const createSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
   lessonType: z.enum(["ONE_ON_ONE", "GROUP"]).default("ONE_ON_ONE"),
-});
+}).refine(
+  (d) => {
+    const s = new Date(d.startTime).getTime();
+    const e = new Date(d.endTime).getTime();
+    // 必须是合法时间且结束晚于开始：否则负/零时长课会绕过库存校验，
+    // 核销时 decrement 负数反而给课包「加课时」。
+    return Number.isFinite(s) && Number.isFinite(e) && e > s;
+  },
+  { message: "结束时间必须晚于开始时间", path: ["endTime"] },
+);
 
 export async function GET(req: Request) {
   const session = await auth();

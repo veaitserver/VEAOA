@@ -239,6 +239,26 @@ async function run() {
   check(1, "HR 不得给自己授予无权的校区", hrCampusNow.length === 1,
     `HTTP ${grab.status}，库内校区数 ${hrCampusNow.length}`);
 
+  // 一般规则（不止「超管」这个特例）：HR 不得自我提权为校长/财务
+  const escRole = await hr.req("PUT", `/api/admin/users/${fx.hr.id}`, { roles: ["HR", "PRINCIPAL", "FINANCE"] });
+  const hrRole2 = await prisma.userRole.findMany({ where: { userId: fx.hr.id } });
+  check(1, "HR 不得把自己提权为校长/财务",
+    !hrRole2.some((r) => r.role === "PRINCIPAL" || r.role === "FINANCE"),
+    `HTTP ${escRole.status}，库内角色 [${hrRole2.map((r) => r.role).join(", ")}]`);
+
+  // HR（Markham）不得跨校区重置别校区（RH）用户的密码 —— 否则可接管账号
+  const rhPrin = await prisma.user.findUnique({ where: { phone: "6470000008" } });
+  const rhHashBefore = rhPrin.passwordHash;
+  const xReset = await hr.req("PUT", `/api/admin/users/${rhPrin.id}`, { password: "pwned-crosscampus" });
+  const rhRow = await prisma.user.findUnique({ where: { id: rhPrin.id } });
+  const rhPwned = await bcrypt.compare("pwned-crosscampus", rhRow.passwordHash);
+  check(1, "HR 不得重置别校区用户的密码", !rhPwned, `HTTP ${xReset.status}`);
+  if (rhPwned) await prisma.user.update({ where: { id: rhPrin.id }, data: { passwordHash: rhHashBefore } });
+
+  // 正向回归：修复不能误伤 —— HR 仍可管理本校区运营角色用户
+  const okName = await hr.req("PUT", `/api/admin/users/${mkmSales.session.user.id}`, { name: "Sarah Chen" });
+  check(1, "HR 仍可改本校区销售的资料（未误伤）", okName.status === 200, `实际 ${okName.status}`);
+
   // ── 阶段 2：校区隔离 ────────────────────────────────────────────────────
   console.log("\n阶段 2 — 校区隔离");
 
@@ -419,6 +439,16 @@ async function run() {
     `实际 ${over.status} — 可用应为 2h`);
   if (over.status === 201) await prisma.scheduledLesson.delete({ where: { id: over.body.id } });
   await prisma.scheduledLesson.delete({ where: { id: hog.id } });
+
+  // 20. 排课必须「结束晚于开始」：负时长课会绕过库存校验，核销时 decrement 负数反给课包加课时
+  const negStart = new Date(fx.base.getTime() + 28 * 86400000);
+  const neg = await t2.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
+    classroomId: fx.rhRoom.id,
+    startTime: negStart.toISOString(), endTime: new Date(negStart.getTime() - 2 * 3600000).toISOString(),
+  });
+  check(4, "排课必须结束晚于开始（负时长被拒）", neg.status === 400, `实际 ${neg.status}`);
+  if (neg.status === 201) await prisma.scheduledLesson.delete({ where: { id: neg.body.id } });
 
   // 17. 撤销核销后应能重新核销
   const acad = new Client("教务"); await acad.login("6470000004", "acad123");
