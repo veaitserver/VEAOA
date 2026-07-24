@@ -6,6 +6,8 @@
  */
 type Window = { count: number; resetAt: number };
 const buckets = new Map<string, Window>();
+// 上限防内存膨胀：伪造 X-Forwarded-For 可制造大量不同 key，超过上限就清一次过期桶。
+const MAX_BUCKETS = 10000;
 
 export type RateLimitOptions = { limit: number; windowMs: number };
 
@@ -14,6 +16,9 @@ export function rateLimit(key: string, { limit, windowMs }: RateLimitOptions): b
   const now = Date.now();
   const w = buckets.get(key);
   if (!w || now >= w.resetAt) {
+    if (buckets.size >= MAX_BUCKETS) {
+      for (const [k, v] of buckets) if (now >= v.resetAt) buckets.delete(k);
+    }
     buckets.set(key, { count: 1, resetAt: now + windowMs });
     return true;
   }
@@ -22,9 +27,22 @@ export function rateLimit(key: string, { limit, windowMs }: RateLimitOptions): b
   return true;
 }
 
-/** 从请求头取客户端 IP（Railway/代理后取 x-forwarded-for 第一段）。 */
+/**
+ * 从请求头取客户端 IP。
+ *
+ * x-forwarded-for = "客户端, 代理1, 代理2..."，**首段是客户端可控的**，用它做限流 key
+ * 会被随机伪造首段绕过。默认信任 1 层反向代理（Railway/Vercel 等）：取由可信边缘
+ * 追加的**最后一段**；层数不同可用 TRUSTED_PROXY_HOPS 配置。
+ */
 export function clientIp(req: Request): string {
   const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
+  if (xff) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) {
+      const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+      // 从末尾数第 hops 段（可信代理链最内侧那台注入的真实客户端 IP）。
+      return parts[Math.max(0, parts.length - hops)];
+    }
+  }
   return req.headers.get("x-real-ip") ?? "unknown";
 }

@@ -109,31 +109,36 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     return NextResponse.json({ error: "总价必须等于总课时 × 单价（折扣请调单价）" }, { status: 400 });
   }
 
-  // 已消耗课时以扣课台账为准（remainingHours 可能被历史 bug 写坏）。
-  // 改总课时后余额 = 新总课时 − 已消耗；不允许改到低于已消耗。
-  const agg = await prisma.courseDeduction.aggregate({
-    where: { packageId: id, reversedAt: null },
-    _sum: { hoursDeducted: true },
-  });
-  const consumed = roundHours(Number(agg._sum.hoursDeducted ?? 0));
-  if (totalHours < consumed) {
-    return NextResponse.json(
-      { error: `总课时不能低于已消耗课时（已消耗 ${consumed}h）` },
-      { status: 400 },
-    );
+  // 聚合已消耗 + 更新放进一个事务，避免与并发的核销/撤销交错造成 remainingHours 丢更新；
+  // 且只有真正改了 totalHours 才重算余额（改备注/单价不该覆写余额）。
+  const changesTotalHours = parsed.data.totalHours !== undefined;
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const agg = await tx.courseDeduction.aggregate({
+        where: { packageId: id, reversedAt: null },
+        _sum: { hoursDeducted: true },
+      });
+      const consumed = roundHours(Number(agg._sum.hoursDeducted ?? 0));
+      if (changesTotalHours && totalHours < consumed) {
+        throw new PkgUpdateError(`总课时不能低于已消耗课时（已消耗 ${consumed}h）`);
+      }
+      return tx.coursePackage.update({
+        where: { id },
+        data: {
+          ...parsed.data,
+          ...(changesTotalHours ? { remainingHours: roundHours(totalHours - consumed) } : {}),
+        },
+        include: { grade: true, subject: true },
+      });
+    });
+    return NextResponse.json(updated);
+  } catch (e) {
+    if (e instanceof PkgUpdateError) return NextResponse.json({ error: e.message }, { status: 400 });
+    throw e;
   }
-
-  const updated = await prisma.coursePackage.update({
-    where: { id },
-    data: {
-      ...parsed.data,
-      remainingHours: roundHours(totalHours - consumed),
-    },
-    include: { grade: true, subject: true },
-  });
-
-  return NextResponse.json(updated);
 }
+
+class PkgUpdateError extends Error {}
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();

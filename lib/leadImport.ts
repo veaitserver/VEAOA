@@ -11,6 +11,7 @@
 import { prisma } from "./prisma";
 import { nextFollowUpDate } from "./datetime";
 import { ImportResult } from "./enums";
+import { isAssignableUser } from "./assign";
 
 export type LeadImportInput = {
   studentName: string;
@@ -223,9 +224,10 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
 
     // ── 建档 ──
     const ownerHint = campaign?.defaultOwnerId ?? ctx.preferredOwnerId ?? null;
-    // 手动录入(autoAssign:false)：不轮询，仅在显式指定且有效时归属，否则留空待手动分配。
+    // 手动录入(autoAssign:false)：不轮询；仅当显式指定了「本校区在职销售」时归属，
+    // 否则留空待校长手动分配（防止把学生指给别校区/非销售用户而从各视图消失）。
     const ownerId = ctx.autoAssign === false
-      ? (ownerHint ? await validateActiveOwner(ownerHint) : null)
+      ? (ownerHint && (await isAssignableUser(ownerHint, "SALES", campusId)) ? ownerHint : null)
       : await pickOwner(campusId, ownerHint);
     const authorId = await followUpAuthor(campusId, ownerId, ctx.actorId);
     const gradeId = input.gradeId ?? await resolveGradeId(input.grade);

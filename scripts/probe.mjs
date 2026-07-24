@@ -416,14 +416,35 @@ async function run() {
       classroomId: fx.rhRoom.id, startTime: slot, endTime: new Date(slot.getTime() + 3600000),
     },
   });
+  // 用「另一名 RH 老师 + 另一间 RH 教室」隔离出「学生」这一维（老师/教室都不冲突）。
+  await prisma.user.deleteMany({ where: { phone: "6470000099" } });
+  const rhTeacher2 = await prisma.user.create({
+    data: {
+      name: "Probe RH Teacher2", phone: "6470000099", passwordHash: await bcrypt.hash("teacher123", 12),
+      roles: { create: [{ role: "TEACHER" }] }, campuses: { create: [{ campusId: "campus-rh" }] },
+    },
+  });
   const clash = await t2.req("POST", "/api/schedule", {
-    teacherId: fx.admin.id, studentId: fx.student.id, packageId: fx.active.id,
+    teacherId: rhTeacher2.id, studentId: fx.student.id, packageId: fx.active.id,
     classroomId: fx.rhRoom2.id,
     startTime: slot.toISOString(), endTime: new Date(slot.getTime() + 3600000).toISOString(),
   });
   check(4, "同一学生同一时段不得被排两节课", clash.status === 409, `实际 ${clash.status}`);
   if (clash.status === 201) await prisma.scheduledLesson.delete({ where: { id: clash.body.id } });
   await prisma.scheduledLesson.delete({ where: { id: first.id } });
+  await prisma.userRole.deleteMany({ where: { userId: rhTeacher2.id } });
+  await prisma.userCampus.deleteMany({ where: { userId: rhTeacher2.id } });
+  await prisma.user.delete({ where: { id: rhTeacher2.id } });
+
+  // M2: 排课不得指定别校区老师（此前 teacherId 直接落库，可跨校区占用老师）
+  const mkmT = await prisma.user.findFirst({ where: { phone: "6470000002" } });
+  const xTeacher = await admin.req("POST", "/api/schedule", {
+    teacherId: mkmT.id, studentId: fx.student.id, packageId: fx.active.id, classroomId: fx.rhRoom.id,
+    startTime: new Date(fx.base.getTime() + 40 * 86400000).toISOString(),
+    endTime: new Date(fx.base.getTime() + 40 * 86400000 + 3600000).toISOString(),
+  });
+  check(4, "排课不得指定别校区老师", xTeacher.status === 400, `实际 ${xTeacher.status}`);
+  if (xTeacher.status === 201) await prisma.scheduledLesson.delete({ where: { id: xTeacher.body.id } });
 
   // 19. 排课不得超库存（余额 10h，先排 8h，再排 4h 应被拒）
   const s1 = new Date(fx.base.getTime() + 14 * 86400000);
@@ -714,6 +735,12 @@ async function run() {
   check(7, "非校长(教务)不能分配学管", acadAssign.status === 403 && mkm1After.studentManagerId === null,
     `HTTP ${acadAssign.status}，学管 ${mkm1After.studentManagerId}`);
 
+  // M1: 分配归属销售的目标必须是本校区在职销售（别校区销售应被拒，否则学生会“消失”）
+  const xAssign = await rhPrincipal.req("PUT", `/api/students/${fx.student.id}`, { salesId: mkmSales.session.user.id });
+  const fxStuAfter = await prisma.student.findUnique({ where: { id: fx.student.id }, select: { salesId: true } });
+  check(7, "分配归属不得指向别校区销售", xAssign.status === 400 && fxStuAfter.salesId !== mkmSales.session.user.id,
+    `HTTP ${xAssign.status}，现归属 ${fxStuAfter.salesId}`);
+
   const pFin = await rhPrincipal.req("POST", `/api/packages/${twoStepPkg.id}/finance-confirm`);
   check(7, "校长不能做财务确认", blocked(pFin), `实际 ${pFin.status}`);
 
@@ -792,8 +819,15 @@ async function run() {
   check(9, "销售建首张课包为新签(NEW_SIGN)", newSign.status === 201 && newSign.body.signingType === "NEW_SIGN",
     `HTTP ${newSign.status}，类型 ${newSign.body?.signingType}`);
 
+  // 一次成交多科目：生效前销售可继续建，仍为新签（不被误判成续费）
+  const newSign2 = await mkmSales.req("POST", "/api/packages", { ...pkgBody, subjectId: fx.subject.id });
+  check(9, "生效前销售可建多张新签（多科目同时成交）", newSign2.status === 201 && newSign2.body.signingType === "NEW_SIGN",
+    `HTTP ${newSign2.status}，类型 ${newSign2.body?.signingType}`);
+
+  // 首张课包生效后，学生进入续费阶段：销售不能再建课包
+  await prisma.coursePackage.update({ where: { id: newSign.body.id }, data: { status: "ACTIVE" } });
   const salesRenew = await mkmSales.req("POST", "/api/packages", pkgBody);
-  check(9, "学生已签约后销售不能再建课包", salesRenew.status === 403, `实际 ${salesRenew.status}`);
+  check(9, "已有生效课包后销售不能再建课包", salesRenew.status === 403, `实际 ${salesRenew.status}`);
 
   // 分配 Markham 学管（Grace）后，学管可建续费
   await prisma.student.update({ where: { id: signStudent.id }, data: { studentManagerId: "user-sm-mkm" } });

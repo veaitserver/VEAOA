@@ -118,6 +118,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "教室与学生不在同一校区" }, { status: 400 });
   }
 
+  // 老师校验：teacherId 原先直接落库、冲突检查还是全局的，可跨校区占用别人的老师
+  // （越权 + 拒绝服务）。必须是本校区在职老师。
+  const teacher = await prisma.user.findUnique({
+    where: { id: teacherId },
+    select: { isActive: true, roles: { select: { role: true } }, campuses: { select: { campusId: true } } },
+  });
+  if (!teacher || !teacher.isActive || !teacher.roles.some((r) => r.role === "TEACHER")) {
+    return NextResponse.json({ error: "老师不存在或非在职老师" }, { status: 400 });
+  }
+  if (!teacher.campuses.some((c) => c.campusId === student.campusId)) {
+    return NextResponse.json({ error: "老师不属于该学生所在校区" }, { status: 400 });
+  }
+
   // Check package is ACTIVE
   const pkg = await prisma.coursePackage.findUnique({ where: { id: packageId } });
   if (!pkg || pkg.status !== "ACTIVE") {
@@ -127,61 +140,57 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "课包不属于该学生" }, { status: 400 });
   }
 
-  // 库存校验：remainingHours 只在核销时才扣，所以已排但未核销的课还没反映进去。
-  // 可用量 = 剩余课时 − 已排未核销的课时总和，避免把一个课包超额排课。
   const durationHours = lessonHours(new Date(startTime), new Date(endTime));
-
-  const packageLessons = await prisma.scheduledLesson.findMany({
-    where: { packageId },
-    include: { log: { include: { deductions: true } } },
-  });
-  const pendingHours = roundHours(
-    packageLessons
-      .filter((l) => !l.log || !l.log.deductions.some((d) => !d.reversedAt))
-      .reduce((sum, l) => sum + lessonHours(l.startTime, l.endTime), 0),
-  );
-  const available = roundHours(Number(pkg.remainingHours) - pendingHours);
-  if (durationHours > available) {
-    return NextResponse.json(
-      { error: `课包可用课时不足（剩余 ${roundHours(Number(pkg.remainingHours))}h，已排未核销 ${pendingHours}h，可用 ${available}h）` },
-      { status: 400 },
-    );
-  }
-
   const overlap = { startTime: { lt: new Date(endTime) }, endTime: { gt: new Date(startTime) } };
 
-  // Conflict check: teacher
-  const teacherConflict = await prisma.scheduledLesson.findFirst({ where: { teacherId, ...overlap } });
-  if (teacherConflict) {
-    return NextResponse.json({ error: "该时段老师已有课程，存在冲突" }, { status: 409 });
+  // 库存校验 + 冲突检查 + 建课放进一个事务，并用「建后复核」堵并发：
+  // SQLite 写串行化，第二个并发事务的建课会排在第一个提交之后，其建后复核即可
+  // 看到对方那条记录 → 冲突回滚，避免超排 / 同一老师·教室·学生被双占。
+  try {
+    const lesson = await prisma.$transaction(async (tx) => {
+      // 可用量 = 剩余课时 − 已排未核销的课时总和。
+      const packageLessons = await tx.scheduledLesson.findMany({
+        where: { packageId },
+        include: { log: { include: { deductions: true } } },
+      });
+      const pendingHours = roundHours(
+        packageLessons
+          .filter((l) => !l.log || !l.log.deductions.some((d) => !d.reversedAt))
+          .reduce((sum, l) => sum + lessonHours(l.startTime, l.endTime), 0),
+      );
+      const available = roundHours(Number(pkg.remainingHours) - pendingHours);
+      if (durationHours > available) {
+        throw new ScheduleError(400, `课包可用课时不足（剩余 ${roundHours(Number(pkg.remainingHours))}h，已排未核销 ${pendingHours}h，可用 ${available}h）`);
+      }
+
+      const created = await tx.scheduledLesson.create({
+        data: { teacherId, studentId, packageId, classroomId, startTime: new Date(startTime), endTime: new Date(endTime), lessonType },
+        include: {
+          teacher: { select: { name: true } },
+          student: { select: { name: true } },
+          classroom: true,
+          package: { include: { subject: true } },
+        },
+      });
+
+      // 建后复核：老师 / 教室 / 学生任一维在同时段已有别的课 → 回滚。
+      const clash = await tx.scheduledLesson.findFirst({
+        where: { id: { not: created.id }, ...overlap, OR: [{ teacherId }, { classroomId }, { studentId }] },
+      });
+      if (clash) {
+        const dim = clash.teacherId === teacherId ? "老师" : clash.classroomId === classroomId ? "教室" : "学生";
+        throw new ScheduleError(409, `该时段${dim}已有课程，存在冲突`);
+      }
+      return created;
+    });
+
+    return NextResponse.json(lesson, { status: 201 });
+  } catch (e) {
+    if (e instanceof ScheduleError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
+}
 
-  // Conflict check: classroom
-  const classroomConflict = await prisma.scheduledLesson.findFirst({ where: { classroomId, ...overlap } });
-  if (classroomConflict) {
-    return NextResponse.json({ error: "该时段教室已被占用，存在冲突" }, { status: 409 });
-  }
-
-  // Conflict check: student —— 原先漏了这一维，同一学生能被同时排进两个教室。
-  const studentConflict = await prisma.scheduledLesson.findFirst({ where: { studentId, ...overlap } });
-  if (studentConflict) {
-    return NextResponse.json({ error: "该时段学生已有课程，存在冲突" }, { status: 409 });
-  }
-
-  const lesson = await prisma.scheduledLesson.create({
-    data: {
-      teacherId, studentId, packageId, classroomId,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
-      lessonType,
-    },
-    include: {
-      teacher: { select: { name: true } },
-      student: { select: { name: true } },
-      classroom: true,
-      package: { include: { subject: true } },
-    },
-  });
-
-  return NextResponse.json(lesson, { status: 201 });
+class ScheduleError extends Error {
+  constructor(public status: number, message: string) { super(message); }
 }

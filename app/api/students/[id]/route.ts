@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canManageStudents, denyCrossCampus, denyNotOwner, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
+import { isAssignableUser } from "@/lib/assign";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
 import { z } from "zod";
@@ -109,12 +110,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
 
   // 改归属销售只限校长/超管；销售不能把线索转给别人或抢过来。
-  if (salesId !== undefined && salesId !== existing.salesId && !canAssignLeadOwner(sessionUser)) {
-    return NextResponse.json({ error: "仅校长可分配/变更线索归属" }, { status: 403 });
+  if (salesId !== undefined && salesId !== existing.salesId) {
+    if (!canAssignLeadOwner(sessionUser)) {
+      return NextResponse.json({ error: "仅校长可分配/变更线索归属" }, { status: 403 });
+    }
+    // 目标须是本校区在职销售，否则学生会被指给别校区/非销售用户而从各视图“消失”。
+    if (salesId !== null && !(await isAssignableUser(salesId, "SALES", existing.campusId))) {
+      return NextResponse.json({ error: "目标不是该校区的有效销售" }, { status: 400 });
+    }
   }
   // 分配/变更学管只限校长/超管。
-  if (studentManagerId !== undefined && studentManagerId !== existing.studentManagerId && !canAssignStudentManager(sessionUser)) {
-    return NextResponse.json({ error: "仅校长可分配/变更学管" }, { status: 403 });
+  if (studentManagerId !== undefined && studentManagerId !== existing.studentManagerId) {
+    if (!canAssignStudentManager(sessionUser)) {
+      return NextResponse.json({ error: "仅校长可分配/变更学管" }, { status: 403 });
+    }
+    if (studentManagerId !== null && !(await isAssignableUser(studentManagerId, "STUDENT_MANAGER", existing.campusId))) {
+      return NextResponse.json({ error: "目标不是该校区的有效学管" }, { status: 400 });
+    }
   }
 
   // 迁校区要求对「迁出」和「迁入」两边都有权限，否则可以把学生推去自己看不到的校区。

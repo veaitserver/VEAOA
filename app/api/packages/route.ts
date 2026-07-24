@@ -99,10 +99,11 @@ export async function POST(req: Request) {
   const denied = denyCrossCampus(sessionUser, student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
-  // 签约类型：学生已有课包 → 续费，否则 → 新签。据此分权：
-  // 新签由销售(归属本人)/校长/超管；续费由该生学管或校长/超管，销售首签后不能再建。
-  const existingCount = await prisma.coursePackage.count({ where: { studentId } });
-  const isRenewal = existingCount > 0;
+  // 签约类型：学生「曾有生效(ACTIVE)课包」→ 续费，否则 → 新签。
+  // 用 ACTIVE 而非课包总数：同一次成交多科目会先建多张待审批课包，它们都应算新签，
+  // 销售可一次性建齐；等第一张生效后，学生才进入「续费由学管负责」阶段，销售不再能建。
+  const activeCount = await prisma.coursePackage.count({ where: { studentId, status: "ACTIVE" } });
+  const isRenewal = activeCount > 0;
   if (isRenewal) {
     if (!canCreateRenewalPackage(sessionUser, student.studentManagerId)) {
       return NextResponse.json({ error: "该学生已签约，续费课包由其学管或校长创建，销售不能再添加" }, { status: 403 });

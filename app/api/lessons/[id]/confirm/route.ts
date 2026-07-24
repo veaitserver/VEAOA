@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canConfirmLog, denyCrossCampus, type SessionUser } from "@/lib/permissions";
-import { lessonHours, roundHours } from "@/lib/hours";
+import { lessonHours, roundHours, isLowOnHours } from "@/lib/hours";
 
 class InsufficientHours extends Error {}
 class AlreadyConfirmed extends Error {}
@@ -78,8 +78,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
       const newRemaining = roundHours(Number(pkg!.remainingHours));
 
-      // 低库存续费提醒：通知销售与本校区校长/超管。
-      if (newRemaining < 3) {
+      // 低库存续费提醒：通知销售与本校区校长/超管。阈值与 UI 统一（LOW_HOURS_THRESHOLD=5）。
+      if (isLowOnHours(newRemaining) || newRemaining <= 0) {
         const student = await tx.student.findUnique({
           where: { id: lesson.studentId },
           select: { salesId: true, campusId: true },
