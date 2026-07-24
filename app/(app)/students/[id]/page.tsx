@@ -7,7 +7,14 @@ import { formatMoney, formatRate, formatDate, formatDateTime, formatPhone } from
 import {
   sourceCategoryLabel, deriveStage, stageLabel, STAGE_COLORS, FUNNEL_STAGES, CONTACT_APP_LABELS, type LeadInfo,
 } from "@/lib/leadLabels";
-import { SIGNING_TYPE_LABELS } from "@/lib/enums";
+import { SIGNING_TYPE_LABELS, LEDGER_TYPE_LABELS } from "@/lib/enums";
+
+const LEDGER_COLORS: Record<string, string> = {
+  PAYMENT: "bg-green-100 text-green-700",
+  PACKAGE_CHARGE: "bg-blue-100 text-blue-700",
+  REFUND_CREDIT: "bg-amber-100 text-amber-700",
+  REFUND_PAYOUT: "bg-red-100 text-red-700",
+};
 
 type Student = {
   id: string; name: string; phone: string; publicSchool?: string; createdAt: string;
@@ -39,6 +46,12 @@ type Package = {
   confirmedAt?: string;
 };
 
+type LedgerEntry = {
+  id: string; type: string; amount: number; note?: string | null; createdAt: string;
+  creator: { name: string };
+  package?: { id: string; grade: { name: string }; subject: { name: string } } | null;
+};
+
 type Lesson = {
   id: string; startTime: string; endTime: string;
   teacher: { name: string }; classroom: { name: string };
@@ -63,7 +76,8 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   const [student, setStudent] = useState<Student | null>(null);
   const [salesUsers, setSalesUsers] = useState<{ id: string; name: string }[]>([]);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
-  const [activeTab, setActiveTab] = useState<"profile" | "packages" | "followups" | "lessons">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "packages" | "followups" | "lessons" | "ledger">("profile");
+  const [ledger, setLedger] = useState<{ entries: LedgerEntry[]; balance: number } | null>(null);
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
   const [followUpForm, setFollowUpForm] = useState({
     contactMethod: "PHONE", content: "", followedAt: new Date().toISOString().slice(0, 16), nextFollowUp: "",
@@ -75,6 +89,15 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   }
 
   useEffect(() => { load(); }, [id]);
+
+  // 账户流水按需拉取（涉及金额，无权者接口会 403，这里静默留空）。
+  useEffect(() => {
+    if (activeTab !== "ledger") return;
+    fetch(`/api/students/${id}/ledger`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setLedger)
+      .catch(() => setLedger(null));
+  }, [activeTab, id]);
 
   // 校长可分配归属销售与学管：拉本校区销售/学管列表。
   useEffect(() => {
@@ -142,7 +165,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Tabs */}
       <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-        {([["profile", "基本信息"], ["packages", `课包(${student.packages.length})`], ["followups", `跟进(${student.followUps.length})`], ["lessons", `上课记录(${student.lessons.length})`]] as const).map(([val, label]) => (
+        {([["profile", "基本信息"], ["packages", `课包(${student.packages.length})`], ["followups", `跟进(${student.followUps.length})`], ["lessons", `上课记录(${student.lessons.length})`], ["ledger", "账户"]] as const).map(([val, label]) => (
           <button key={val} onClick={() => setActiveTab(val)}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${activeTab === val ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
             {label}
@@ -399,6 +422,62 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {activeTab === "ledger" && (
+        <div className="space-y-4">
+          {!ledger ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
+              加载中，或你无权查看账户流水
+            </div>
+          ) : (
+            <>
+              <div className="bg-white rounded-xl border border-slate-200 p-5 flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-slate-400">账户余额</div>
+                  <div className="text-xs text-slate-400 mt-1">收款、退费、转化差额都记在这里</div>
+                </div>
+                <div className={`text-2xl font-bold ${Math.abs(ledger.balance) < 0.005 ? "text-slate-800" : ledger.balance > 0 ? "text-green-700" : "text-red-600"}`}>
+                  {formatMoney(ledger.balance)}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">时间</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">类型</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">说明</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">经手人</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">金额</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {ledger.entries.map((e) => (
+                      <tr key={e.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-xs text-slate-500">{formatDateTime(e.createdAt)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${LEDGER_COLORS[e.type] ?? "bg-slate-100 text-slate-600"}`}>
+                            {LEDGER_TYPE_LABELS[e.type] ?? e.type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-600">{e.note ?? "—"}</td>
+                        <td className="px-4 py-3 text-sm text-slate-500">{e.creator.name}</td>
+                        <td className={`px-4 py-3 text-sm text-right font-medium tabular-nums ${Number(e.amount) >= 0 ? "text-green-700" : "text-red-600"}`}>
+                          {Number(e.amount) >= 0 ? "+" : "−"}{formatMoney(Math.abs(Number(e.amount)))}
+                        </td>
+                      </tr>
+                    ))}
+                    {ledger.entries.length === 0 && (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">暂无账户流水</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -851,6 +851,103 @@ async function run() {
   await prisma.followUp.deleteMany({ where: { studentId: signStudent.id } });
   await prisma.lead.deleteMany({ where: { studentId: signStudent.id } });
   await prisma.student.delete({ where: { id: signStudent.id } });
+
+  // ── 阶段 10：退费与账本（学管发起 → 校长审核 → 财务打款）────────────────────
+  console.log("\n阶段 10 — 退费与账本");
+  const refPhone = "6470009902";
+  const cleanupRefund = async () => {
+    const s = await prisma.student.findFirst({ where: { phone: refPhone } });
+    if (!s) return;
+    await prisma.ledgerEntry.deleteMany({ where: { studentId: s.id } });
+    await prisma.refundRequest.deleteMany({ where: { studentId: s.id } });
+    await prisma.coursePackage.deleteMany({ where: { studentId: s.id } });
+    await prisma.followUp.deleteMany({ where: { studentId: s.id } });
+    await prisma.lead.deleteMany({ where: { studentId: s.id } });
+    await prisma.student.delete({ where: { id: s.id } });
+  };
+  await cleanupRefund();
+
+  // RH 学生，学管 = user-sm-rh；课包 20h @ $100，已消耗 4h → 剩余 16h
+  const refStudent = await prisma.student.create({
+    data: {
+      name: "退费-Probe", phone: refPhone, campusId: "campus-rh",
+      gradeId: fx.grade.id, studentManagerId: "user-sm-rh",
+      leadInfo: { create: { source: "OTHER", status: "NEW" } },
+    },
+  });
+  const refPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: refStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 20, pricePerHour: 100, totalAmount: 2000, remainingHours: 16,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
+    },
+  });
+
+  const smRh = new Client("RH 学管"); await smRh.login("6470000012", "sm123");
+  const smMkm = new Client("Markham 学管"); await smMkm.login("6470000011", "sm123");
+
+  // 别校区学管不能给该生发起（校区隔离）
+  const xCampus = await smMkm.req("POST", "/api/refunds", { packageId: refPkg.id, hours: 2 });
+  check(10, "别校区学管不能发起退费", blocked(xCampus), `实际 ${xCampus.status}`);
+
+  // 超过可退上限应被拒
+  const tooMuch = await smRh.req("POST", "/api/refunds", { packageId: refPkg.id, hours: 99 });
+  check(10, "退费不得超过可退课时", tooMuch.status === 400, `实际 ${tooMuch.status}`);
+
+  // 学管发起 6h = $600
+  const reqCreated = await smRh.req("POST", "/api/refunds", { packageId: refPkg.id, hours: 6, reason: "转学" });
+  check(10, "学管可为自己负责的学生发起退费",
+    reqCreated.status === 201 && Number(reqCreated.body?.amount) === 600,
+    `HTTP ${reqCreated.status}，金额 ${reqCreated.body?.amount}`);
+  const refId = reqCreated.body?.id;
+
+  // 同课包不得有第二笔在途申请
+  const dupReq = await smRh.req("POST", "/api/refunds", { packageId: refPkg.id, hours: 1 });
+  check(10, "同课包不得重复发起在途退费", dupReq.status === 409, `实际 ${dupReq.status}`);
+
+  // 财务不能跳过校长审核直接打款
+  const skipP = await finance.req("POST", `/api/refunds/${refId}/pay`);
+  check(10, "财务不能跳过校长审核打款", skipP.status === 400, `实际 ${skipP.status}`);
+
+  // 学管不能自审
+  const selfApprove = await smRh.req("POST", `/api/refunds/${refId}/approve`);
+  check(10, "学管不能自己审核退费", blocked(selfApprove), `实际 ${selfApprove.status}`);
+
+  // 校长审核
+  const apprRes = await rhPrincipal.req("POST", `/api/refunds/${refId}/approve`);
+  check(10, "校长审核后转待财务打款",
+    apprRes.status === 200 && apprRes.body?.status === "PENDING_FINANCE",
+    `HTTP ${apprRes.status}，状态 ${apprRes.body?.status}`);
+
+  // 校长不能打款
+  const payByP = await rhPrincipal.req("POST", `/api/refunds/${refId}/pay`);
+  check(10, "校长不能打款", blocked(payByP), `实际 ${payByP.status}`);
+
+  // 财务并发打款两次，只能结算一次
+  const [pay1, pay2] = await Promise.all([
+    finance.req("POST", `/api/refunds/${refId}/pay`),
+    finance.req("POST", `/api/refunds/${refId}/pay`),
+  ]);
+  const okCount = [pay1, pay2].filter((r) => r.status === 200).length;
+  const refPkgAfter = await prisma.coursePackage.findUnique({ where: { id: refPkg.id } });
+  const refEntries = await prisma.ledgerEntry.findMany({ where: { studentId: refStudent.id } });
+  const refBalance = Math.round(refEntries.reduce((s, e) => s + Number(e.amount), 0) * 100) / 100;
+  check(10, "财务并发打款只结算一次", okCount === 1, `成功 ${okCount} 次（应 1）`);
+  check(10, "打款后课包同步减总课时/剩余/总额",
+    Number(refPkgAfter.totalHours) === 14 && Number(refPkgAfter.remainingHours) === 10 && Number(refPkgAfter.totalAmount) === 1400,
+    `总 ${refPkgAfter.totalHours}h / 剩余 ${refPkgAfter.remainingHours}h / 总额 $${refPkgAfter.totalAmount}（应 14/10/1400）`);
+  check(10, "打款写两条账本流水且余额归零",
+    refEntries.length === 2 && refBalance === 0,
+    `流水 ${refEntries.length} 条，余额 $${refBalance}（应 2 条 / $0）`);
+  check(10, "课包不变量：总价 = 总课时 × 单价",
+    Math.abs(Number(refPkgAfter.totalAmount) - Number(refPkgAfter.totalHours) * Number(refPkgAfter.pricePerHour)) < 0.005,
+    `$${refPkgAfter.totalAmount} vs ${refPkgAfter.totalHours}h × $${refPkgAfter.pricePerHour}`);
+
+  // 教务无权查看账户流水（涉及金额）
+  const acadLedger = await acad.req("GET", `/api/students/${refStudent.id}/ledger`);
+  check(10, "教务不得查看学生账户流水", blocked(acadLedger), `实际 ${acadLedger.status}`);
+
+  await cleanupRefund();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -866,7 +963,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

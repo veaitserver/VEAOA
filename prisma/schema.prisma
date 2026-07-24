@@ -31,6 +31,11 @@ model User {
   notifications      Notification[]
   campaignsOwned     Campaign[]        @relation("CampaignOwner")
   deductionUnlocks   CourseDeduction[] @relation("DeductionUnlocker")
+  ledgerEntries      LedgerEntry[]     @relation("LedgerCreator")
+  refundsCreated     RefundRequest[]   @relation("RefundCreator")
+  refundsApproved    RefundRequest[]   @relation("RefundApprover")
+  refundsPaid        RefundRequest[]   @relation("RefundPayer")
+  refundsRejected    RefundRequest[]   @relation("RefundRejecter")
 }
 
 model UserRole {
@@ -105,6 +110,8 @@ model Student {
   followUps FollowUp[]
   packages  CoursePackage[]
   lessons   ScheduledLesson[]
+  ledgerEntries LedgerEntry[]
+  refunds       RefundRequest[]
 
   // 同校区 + 同号 + 同名 视为同一学生，防止重复建档；兄弟姐妹(同号不同名)不受限。
   @@unique([campusId, phone, name])
@@ -201,6 +208,8 @@ model CoursePackage {
 
   lessons    ScheduledLesson[]
   deductions CourseDeduction[]
+  ledgerEntries LedgerEntry[]
+  refunds       RefundRequest[]
 }
 
 model Classroom {
@@ -267,6 +276,66 @@ model CourseDeduction {
   log            LessonLog     @relation(fields: [logId], references: [id])
   reverser       User?         @relation(fields: [reversedById], references: [id])
   financeUnlocker User?        @relation("DeductionUnlocker", fields: [financeUnlockedById], references: [id])
+}
+
+// 学生账户流水（账本）。余额 = 该生所有流水 amount 之和。
+// 正数 = 价值进入账户（家长交钱、课包剩余价值退回）；
+// 负数 = 价值离开账户（建课包占用、实际退款打出）。
+// 一次业务动作可能产生多条流水（如转化 = 退课入账 + 补款 + 课包扣款）。
+model LedgerEntry {
+  id        String   @id @default(cuid())
+  studentId String
+  // PAYMENT 收款 / PACKAGE_CHARGE 课包扣款 / REFUND_CREDIT 退课入账 / REFUND_PAYOUT 退款打出
+  type      String
+  amount    Float
+  packageId String?
+  refundId  String?
+  note      String?
+  createdById String
+  createdAt DateTime @default(now())
+
+  student   Student        @relation(fields: [studentId], references: [id])
+  package   CoursePackage? @relation(fields: [packageId], references: [id])
+  refund    RefundRequest? @relation(fields: [refundId], references: [id])
+  creator   User           @relation("LedgerCreator", fields: [createdById], references: [id])
+
+  @@index([studentId, createdAt])
+}
+
+// 退费申请：按原单价退未消耗课时，不收手续费，支持部分退。
+// 流程：学管发起 → 校长审核(PENDING_FINANCE) → 财务复核打款(PAID)。
+// 打款那一刻才动课包课时并写账本，避免未审批就减库存。
+model RefundRequest {
+  id           String   @id @default(cuid())
+  studentId    String
+  packageId    String
+  hours        Float    // 退的课时数
+  pricePerHour Float    // 原单价快照（审批期间课包被改也按发起时口径）
+  amount       Float    // hours × pricePerHour
+  // PENDING_APPROVAL 待校长审核 / PENDING_FINANCE 待财务复核 / PAID 已退款 / REJECTED 已驳回
+  status       String   @default("PENDING_APPROVAL")
+  reason       String?
+  createdById  String
+  approvedById String?
+  approvedAt   DateTime?
+  paidById     String?
+  paidAt       DateTime?
+  rejectedById String?
+  rejectedAt   DateTime?
+  rejectReason String?
+  createdAt    DateTime @default(now())
+
+  student  Student       @relation(fields: [studentId], references: [id])
+  package  CoursePackage @relation(fields: [packageId], references: [id])
+  creator  User          @relation("RefundCreator", fields: [createdById], references: [id])
+  approver User?         @relation("RefundApprover", fields: [approvedById], references: [id])
+  payer    User?         @relation("RefundPayer", fields: [paidById], references: [id])
+  rejecter User?         @relation("RefundRejecter", fields: [rejectedById], references: [id])
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([studentId])
+  @@index([status])
 }
 
 model Notification {

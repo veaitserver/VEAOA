@@ -13,6 +13,7 @@ import {
 } from "@/lib/permissions";
 import { Role } from "@/lib/enums";
 import { roundHours } from "@/lib/hours";
+import { settlableHours } from "@/lib/settlement";
 import { z } from "zod";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -53,12 +54,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "只能查看自己名下学生的课包" }, { status: 403 });
   }
 
+  // 可退课时上限（剩余 − 已排未核销），供退费表单校验与提示。
+  const settlable = await settlableHours(prisma, pkg);
+  const withSettlable = { ...pkg, refundable: settlable };
+
   // 教务看不到金额。
   if (!canViewPackageFinancials(sessionUser)) {
-    const { pricePerHour: _p, totalAmount: _t, ...rest } = pkg;
+    const { pricePerHour: _p, totalAmount: _t, ...rest } = withSettlable;
     return NextResponse.json(rest);
   }
-  return NextResponse.json(pkg);
+  return NextResponse.json(withSettlable);
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {

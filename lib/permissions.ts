@@ -176,6 +176,27 @@ export function denyNotOwner(user: SessionUser, ownerId: string | null | undefin
   return ownerId === user.id ? null : "只能操作分配给自己的线索";
 }
 
+// ── 账本与退费 ───────────────────────────────────────────────────────────────
+/** 查看学生账户流水（涉及金额）：与课包金额同一批人，教务/老师看不到。 */
+export function canViewLedger(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.STUDENT_MANAGER);
+}
+
+/** 发起退费：学管负责学生后续，由其发起；校长/超管可代发起。 */
+export function canCreateRefund(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.STUDENT_MANAGER, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 退费第一步审核：校长。 */
+export function canApproveRefund(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 退费第二步复核并实际打款：财务。钱的动作归财务，与课包财务确认一致。 */
+export function canPayRefund(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
+}
+
 export function canSubmitLog(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.TEACHER, Role.SUPER_ADMIN);
 }

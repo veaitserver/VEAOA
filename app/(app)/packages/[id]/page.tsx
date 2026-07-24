@@ -7,8 +7,11 @@ import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
 import { SIGNING_TYPE_LABELS } from "@/lib/enums";
 
+type Refundable = { hours: number; remainingHours: number; pendingHours: number };
+
 type Package = {
   id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
+  refundable?: Refundable;
   pricePerHour: string; totalAmount: string; notes?: string; createdAt: string;
   confirmedAt?: string; financeConfirmedAt?: string;
   student: { id: string; name: string; campusId: string };
@@ -44,10 +47,16 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [confirming, setConfirming] = useState(false);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
   const [managerId, setManagerId] = useState("");
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundHours, setRefundHours] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refundMsg, setRefundMsg] = useState("");
 
   const userRoles: string[] = (session?.user as { roles: string[] })?.roles ?? [];
   const canConfirm = userRoles.some(r => ["PRINCIPAL", "SUPER_ADMIN"].includes(r));
   const canFinanceConfirm = userRoles.some(r => ["FINANCE", "SUPER_ADMIN"].includes(r));
+  // 发起退费：学管（负责该生）或校长/超管；后端会再校验归属。
+  const canRefund = userRoles.some(r => ["STUDENT_MANAGER", "PRINCIPAL", "SUPER_ADMIN"].includes(r));
   const canEdit = userRoles.some(r => ["FINANCE", "SUPER_ADMIN"].includes(r)) ||
     (pkg?.status === "PENDING_APPROVAL" && userRoles.some(r => ["SALES", "PRINCIPAL"].includes(r)));
 
@@ -81,6 +90,23 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     await fetch(`/api/packages/${id}/finance-confirm`, { method: "POST" });
     setConfirming(false);
     load();
+  }
+
+  async function submitRefund() {
+    setRefundMsg("");
+    const h = Number(refundHours);
+    if (!(h > 0)) { setRefundMsg("请填写要退的课时"); return; }
+    const res = await fetch("/api/refunds", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ packageId: id, hours: h, reason: refundReason || null }),
+    });
+    if (res.ok) {
+      setShowRefund(false); setRefundHours(""); setRefundReason("");
+      setRefundMsg("");
+      load();
+    } else {
+      setRefundMsg((await res.json()).error ?? "提交失败");
+    }
   }
 
   async function handleDelete() {
@@ -200,7 +226,54 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             删除课包
           </button>
         )}
+        {canRefund && pkg.status === "ACTIVE" && (pkg.refundable?.hours ?? 0) > 0 && !showRefund && (
+          <button onClick={() => setShowRefund(true)}
+            className="border border-slate-300 text-slate-700 px-5 py-2 rounded-lg text-sm font-medium hover:bg-slate-50">
+            申请退费
+          </button>
+        )}
       </div>
+
+      {/* 退费申请表单 */}
+      {showRefund && pkg.refundable && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 max-w-lg">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-800">申请退费</h2>
+            <button onClick={() => { setShowRefund(false); setRefundMsg(""); }} className="text-slate-400 hover:text-slate-600">✕</button>
+          </div>
+          <p className="text-xs text-slate-500">
+            按原单价 {formatRate(pkg.pricePerHour)} 退，不收手续费。最多可退 <b className="text-slate-700">{pkg.refundable.hours}h</b>
+            （剩余 {pkg.refundable.remainingHours}h，已排未核销 {pkg.refundable.pendingHours}h 需先处理）。
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">退多少课时 *</label>
+              <input type="number" min="0" step="0.5" max={pkg.refundable.hours}
+                value={refundHours} onChange={(e) => setRefundHours(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">应退金额</label>
+              <div className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 font-medium text-slate-800">
+                {formatMoney(Math.round(Number(refundHours || 0) * Number(pkg.pricePerHour) * 100) / 100)}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">退费原因</label>
+            <input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="如 转学 / 时间冲突"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          {refundMsg && <p className="text-red-600 text-sm">{refundMsg}</p>}
+          <div className="flex items-center gap-3">
+            <button onClick={submitRefund}
+              className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+              提交申请
+            </button>
+            <span className="text-xs text-slate-400">提交后需校长审核、财务打款</span>
+          </div>
+        </div>
+      )}
 
       {/* Deduction History */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

@@ -11,6 +11,7 @@ import {
   canViewPackages,
   canViewSalesReport,
   canViewTeacherReport,
+  canViewLedger,
   isSuperAdmin,
   type SessionUser,
 } from "@/lib/permissions";
@@ -41,6 +42,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/packages", label: "课包管理", icon: "📦", can: canViewPackages },
       { href: "/schedule", label: "排课", icon: "📅" },
       { href: "/lessons", label: "核销管理", icon: "✅" },
+      { href: "/refunds", label: "退费管理", icon: "💸", can: canViewLedger },
     ],
   },
   {

@@ -97,6 +97,39 @@ export const SIGNING_TYPE_LABELS: Record<string, string> = {
   RENEWAL: "续费",
 };
 
+// 账本流水类型。正负号约定：+ 价值进入学生账户，− 价值离开。
+// 余额 = 全部流水之和；正常结清后应为 0。
+export const LedgerType = {
+  PAYMENT: "PAYMENT",               // 收款：签约/续费/补款，家长交钱 (+)
+  PACKAGE_CHARGE: "PACKAGE_CHARGE", // 课包扣款：建/生效课包占用账户价值 (−)
+  REFUND_CREDIT: "REFUND_CREDIT",   // 退课入账：课包剩余价值退回账户 (+)
+  REFUND_PAYOUT: "REFUND_PAYOUT",   // 退款打出：钱实际退给家长 (−)
+} as const;
+export type LedgerType = (typeof LedgerType)[keyof typeof LedgerType];
+
+export const LEDGER_TYPE_LABELS: Record<string, string> = {
+  PAYMENT: "收款",
+  PACKAGE_CHARGE: "课包扣款",
+  REFUND_CREDIT: "退课入账",
+  REFUND_PAYOUT: "退款打出",
+};
+
+// 退费两步审批：学管发起 → 校长审核 → 财务复核打款。
+export const RefundStatus = {
+  PENDING_APPROVAL: "PENDING_APPROVAL", // 待校长审核
+  PENDING_FINANCE: "PENDING_FINANCE",   // 校长已审核，待财务复核打款
+  PAID: "PAID",                         // 已退款
+  REJECTED: "REJECTED",                 // 已驳回
+} as const;
+export type RefundStatus = (typeof RefundStatus)[keyof typeof RefundStatus];
+
+export const REFUND_STATUS_LABELS: Record<string, string> = {
+  PENDING_APPROVAL: "待校长审核",
+  PENDING_FINANCE: "待财务打款",
+  PAID: "已退款",
+  REJECTED: "已驳回",
+};
+
 export const LessonType = {
   ONE_ON_ONE: "ONE_ON_ONE",
   GROUP: "GROUP",
