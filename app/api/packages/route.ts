@@ -8,10 +8,11 @@ const createSchema = z.object({
   studentId: z.string().min(1),
   gradeId: z.string().min(1),
   subjectId: z.string().min(1),
-  totalHours: z.number().positive(),
-  pricePerHour: z.number().positive(),
-  totalAmount: z.number().positive(),
-  notes: z.string().optional(),
+  // 加上限并要求有限值，避免 Infinity/超大数字污染账务。
+  totalHours: z.number().positive().max(10000).finite(),
+  pricePerHour: z.number().positive().max(100000).finite(),
+  totalAmount: z.number().positive().max(1_000_000_000).finite(),
+  notes: z.string().max(2000).optional(),
 });
 
 export async function GET(req: Request) {

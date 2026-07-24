@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageUsers } from "@/lib/permissions";
+import { canManageUsers, isSuperAdmin, type SessionUser } from "@/lib/permissions";
 import type { Role } from "@/lib/enums";
 import { z } from "zod";
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = session.user as { roles: Role[]; campusIds: string[]; id: string; name: string };
-  if (!canManageUsers(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isSuperAdmin(session.user as SessionUser)) return NextResponse.json({ error: "仅超管可删除科目" }, { status: 403 });
   const { id } = await params;
+  const inUse = await prisma.coursePackage.count({ where: { subjectId: id } })
+    + await prisma.lessonLog.count({ where: { subjectId: id } });
+  if (inUse > 0) return NextResponse.json({ error: "该科目仍被课包或上课记录引用，不能删除" }, { status: 400 });
   await prisma.subject.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

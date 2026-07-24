@@ -296,8 +296,10 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
     await logImport(ctx.source, ImportResult.CREATED, studentId, ownerId ? null : "无可分配销售，暂未指派负责人", payload);
     return { result: "CREATED", studentId, ownerId };
   } catch (e: unknown) {
+    // 内部异常详情写入导入日志便于排障，但不透传给调用方（可能含表名/约束名等实现细节）。
     const msg = e instanceof Error ? e.message : String(e);
-    return reject(`内部错误：${msg}`);
+    await logImport(ctx.source, ImportResult.REJECTED, null, `内部错误：${msg}`, payload);
+    return { result: "REJECTED", reason: "导入失败，请稍后再试" };
   }
 }
 

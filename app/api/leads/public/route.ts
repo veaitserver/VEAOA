@@ -7,17 +7,18 @@ import { z } from "zod";
  * 公开捕获表单的提交端点（无需登录）。校区/来源来自 campaign token，家长不填。
  * 反垃圾：蜜罐字段 + 按 IP 限流；不用 CAPTCHA，保持零摩擦。
  */
+// 公开无登录端点：所有字段加长度上限，防止超长字符串灌库。
 const schema = z.object({
-  token: z.string().min(1),
-  studentName: z.string().min(1),
-  phone: z.string().min(1),
-  preferredContactApp: z.string().optional().nullable(),
-  contactAppId: z.string().optional().nullable(),
-  grade: z.string().optional().nullable(),
-  subjectsOfInterest: z.string().optional().nullable(),
-  postalCode: z.string().optional().nullable(),
+  token: z.string().min(1).max(200),
+  studentName: z.string().min(1).max(100),
+  phone: z.string().min(1).max(30),
+  preferredContactApp: z.string().max(30).optional().nullable(),
+  contactAppId: z.string().max(100).optional().nullable(),
+  grade: z.string().max(50).optional().nullable(),
+  subjectsOfInterest: z.string().max(200).optional().nullable(),
+  postalCode: z.string().max(20).optional().nullable(),
   // 蜜罐：正常用户看不到、不会填；被填了即判为机器人。
-  website: z.string().optional().nullable(),
+  website: z.string().max(200).optional().nullable(),
 });
 
 export async function POST(req: Request) {

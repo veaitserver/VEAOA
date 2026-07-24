@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { importLead, type LeadImportInput } from "@/lib/leadImport";
 import { z } from "zod";
+
+/** 定长比较，避免用 !== 的短路比较泄露 API key 的计时侧信道。 */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
 
 /**
  * 线索导入端点（机器对机器，如 Google Forms 的 Apps Script 调用）。
@@ -29,7 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "服务端未配置 LEAD_IMPORT_API_KEY" }, { status: 500 });
   }
   const provided = req.headers.get("x-api-key");
-  if (!provided || provided !== configured) {
+  if (!provided || !timingSafeEqualStr(provided, configured)) {
     return NextResponse.json({ error: "无效的 API key" }, { status: 401 });
   }
 
