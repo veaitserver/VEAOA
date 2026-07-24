@@ -283,7 +283,7 @@ async function main() {
   // ── Students ────────────────────────────────────────────────────────────────
   // Markham students
   const s1 = await prisma.student.upsert({
-    where: { phone: "6471000001" },
+    where: { id: "student-mkm-1" },
     update: {},
     create: {
       id: "student-mkm-1",
@@ -297,7 +297,7 @@ async function main() {
     },
   });
   const s2 = await prisma.student.upsert({
-    where: { phone: "6471000002" },
+    where: { id: "student-mkm-2" },
     update: {},
     create: {
       id: "student-mkm-2",
@@ -310,7 +310,7 @@ async function main() {
     },
   });
   const s3 = await prisma.student.upsert({
-    where: { phone: "6471000003" },
+    where: { id: "student-mkm-3" },
     update: {},
     create: {
       id: "student-mkm-3",
@@ -326,7 +326,7 @@ async function main() {
 
   // Richmond Hill students
   const s4 = await prisma.student.upsert({
-    where: { phone: "6472000001" },
+    where: { id: "student-rh-1" },
     update: {},
     create: {
       id: "student-rh-1",
@@ -340,7 +340,7 @@ async function main() {
     },
   });
   const s5 = await prisma.student.upsert({
-    where: { phone: "6472000002" },
+    where: { id: "student-rh-2" },
     update: {},
     create: {
       id: "student-rh-2",
@@ -355,7 +355,7 @@ async function main() {
 
   // Scarborough students
   const s6 = await prisma.student.upsert({
-    where: { phone: "6473000001" },
+    where: { id: "student-scar-1" },
     update: {},
     create: {
       id: "student-scar-1",
@@ -369,7 +369,7 @@ async function main() {
     },
   });
   const s7 = await prisma.student.upsert({
-    where: { phone: "6473000002" },
+    where: { id: "student-scar-2" },
     update: {},
     create: {
       id: "student-scar-2",
@@ -384,7 +384,7 @@ async function main() {
 
   // Mississauga students
   const s8 = await prisma.student.upsert({
-    where: { phone: "9051000001" },
+    where: { id: "student-miss-1" },
     update: {},
     create: {
       id: "student-miss-1",
@@ -398,7 +398,7 @@ async function main() {
     },
   });
   const s9 = await prisma.student.upsert({
-    where: { phone: "9051000002" },
+    where: { id: "student-miss-2" },
     update: {},
     create: {
       id: "student-miss-2",

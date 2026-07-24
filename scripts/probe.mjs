@@ -126,7 +126,7 @@ async function setup() {
 
   // Richmond Hill 的一次性学生 + 待审批课包 + 已激活课包 + 未来课程
   const student = await prisma.student.upsert({
-    where: { phone: FIX.studentPhone },
+    where: { campusId_phone_name: { campusId: "campus-rh", phone: FIX.studentPhone, name: "Probe Student RH" } },
     update: { campusId: "campus-rh" },
     create: {
       name: "Probe Student RH", phone: FIX.studentPhone,
@@ -301,6 +301,10 @@ async function run() {
   const pkgNow = await prisma.coursePackage.findUnique({ where: { id: fx.pending.id } });
   check(3, "老师不得改待审批课包的价格/课时", Number(pkgNow.totalHours) === 40,
     `HTTP ${teacherEdit.status}，课包现为 ${pkgNow.totalHours}h @ $${pkgNow.pricePerHour}`);
+
+  // H1: 老师不得读课包详情（此前拿到 packageId 即可读全量单价/总额/扣课台账）
+  const teacherReadPkg = await mkmTeacher.req("GET", `/api/packages/${fx.pending.id}`);
+  check(3, "老师不得读课包详情", blocked(teacherReadPkg), `实际 ${teacherReadPkg.status}`);
 
   const salesSchedule = await mkmSales.req("POST", "/api/schedule", {
     teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
@@ -518,14 +522,46 @@ async function run() {
   }
   await prisma.coursePackage.delete({ where: { id: racePkg.id } });
 
+  // H4: 同一节课并发/重复核销只扣一次（幂等门闩）
+  const dblPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
+    },
+  });
+  const dblStart = new Date(fx.base.getTime() + 35 * 86400000);
+  const dblLesson = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: dblPkg.id,
+      classroomId: fx.rhRoom.id, startTime: dblStart, endTime: new Date(dblStart.getTime() + 2 * 3600000),
+    },
+  });
+  const dblLog = await prisma.lessonLog.create({
+    data: { lessonId: dblLesson.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "dbl-confirm" },
+  });
+  await Promise.all([
+    admin.req("POST", `/api/lessons/${dblLesson.id}/confirm`),
+    admin.req("POST", `/api/lessons/${dblLesson.id}/confirm`),
+  ]);
+  const dblDeds = await prisma.courseDeduction.count({ where: { logId: dblLog.id, reversedAt: null } });
+  const dblPkgNow = await prisma.coursePackage.findUnique({ where: { id: dblPkg.id } });
+  check(4, "同一节课并发核销只扣一次（H4）", dblDeds === 1 && Number(dblPkgNow.remainingHours) === 8,
+    `生效扣课 ${dblDeds} 条，剩余 ${dblPkgNow.remainingHours}h（应 1 条 / 8h）`);
+  await prisma.courseDeduction.deleteMany({ where: { packageId: dblPkg.id } });
+  await prisma.lessonLog.deleteMany({ where: { lessonId: dblLesson.id } });
+  await prisma.scheduledLesson.delete({ where: { id: dblLesson.id } });
+  await prisma.coursePackage.delete({ where: { id: dblPkg.id } });
+
   // ── 阶段 5：线索导入 API ────────────────────────────────────────────────
   console.log("\n阶段 5 — 线索导入 API");
 
   const apiKey = readApiKey();
   const PHONE = "6478880001";
-  const PHONE_APP = "6478880002"; // 不同电话、相同 contactAppId，测 App 账号去重
+  const PHONE_APP = "6478880002"; // 不同电话、相同 contactAppId、同名 → 应合并
+  const PHONE_SIB = "6478880003"; // 相同 contactAppId 但不同名（兄弟姐妹）→ 应各自建档
   const cleanupLeads = async () => {
-    for (const ph of [PHONE, PHONE_APP]) {
+    for (const ph of [PHONE, PHONE_APP, PHONE_SIB]) {
       await prisma.followUp.deleteMany({ where: { student: { phone: ph } } });
       await prisma.lead.deleteMany({ where: { student: { phone: ph } } });
       await prisma.student.deleteMany({ where: { phone: ph } });
@@ -552,7 +588,7 @@ async function run() {
     preferred_contact_app: "WECHAT", contact_app_id: "probe_app_01", subjects_of_interest: "Math",
     campaign_token: "mkm-expo-2026",
   });
-  const createdStudent = await prisma.student.findUnique({
+  const createdStudent = await prisma.student.findFirst({
     where: { phone: PHONE }, include: { leadInfo: true, sales: true, followUps: true },
   });
   check(5, "合法 key + campaign 建档应 201", leadCreated.status === 201 && leadCreated.body.result === "CREATED",
@@ -578,13 +614,23 @@ async function run() {
   const noCampus = await importReq(apiKey, { student_name: "No Campus", phone: "6478889999", source_category: "OTHER", source_detail: "x" });
   check(5, "无 campaign 且无显式校区应 422 拒绝", noCampus.status === 422, `实际 ${noCampus.status}`);
 
+  // 同名 + 相同 App 账号（不同电话）→ 合并（同一学生换了号码）
   const appDedup = await importReq(apiKey, {
-    student_name: "Probe Parent Alt", phone: `+1 647-888-0002`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
+    student_name: "Probe Parent", phone: `+1 647-888-0002`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
   });
   const appDupCount = await prisma.student.count({ where: { phone: PHONE_APP } });
-  check(5, "相同联系App账号应合并（不同电话也去重）",
+  check(5, "同名+相同App账号（不同电话）应合并",
     appDedup.body.result === "MERGED" && appDupCount === 0,
     `实际 ${appDedup.body.result ?? appDedup.status}，PHONE_APP 学生数(应为0) ${appDupCount}`);
+
+  // 不同名 + 相同 App 账号（家长微信号被兄弟姐妹共用）→ 不合并，各自建档
+  const sibling = await importReq(apiKey, {
+    student_name: "Probe Sibling", phone: `+1 647-888-0003`, contact_app_id: "PROBE_APP_01", campaign_token: "mkm-expo-2026",
+  });
+  const sibCount = await prisma.student.count({ where: { phone: PHONE_SIB } });
+  check(5, "不同名+相同App账号（兄弟姐妹）应各自建档不合并",
+    sibling.body.result === "CREATED" && sibCount === 1,
+    `实际 ${sibling.body.result ?? sibling.status}，PHONE_SIB 学生数(应为1) ${sibCount}`);
 
   await cleanupLeads();
 

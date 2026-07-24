@@ -199,10 +199,17 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
       return reject("电话号码格式不正确：需为 10 位加拿大手机号（可含 +1、空格、横杠、括号）");
     }
     const normAppId = normalizeAppId(input.contactAppId);
+    const normName = input.studentName.trim();
 
-    // 去重：电话 或 联系App账号 命中即视为同一线索。
+    // 去重：限定在本校区内（杜绝跨校区合并），且必须同名 —— 家长手机号/微信号会被
+    // 多个在读孩子共用，只有「同校区 + 同名 + 同号(或同App账号)」才算同一学生，
+    // 否则兄弟姐妹会被误并成一条。
     const existing = await prisma.student.findFirst({
-      where: { OR: [{ phone: normPhone }, ...(normAppId ? [{ contactAppId: normAppId }] : [])] },
+      where: {
+        campusId,
+        name: normName,
+        OR: [{ phone: normPhone }, ...(normAppId ? [{ contactAppId: normAppId }] : [])],
+      },
       include: { leadInfo: true },
     });
 
@@ -210,7 +217,7 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
     const tomorrow = nextFollowUpDate(now);
 
     if (existing) {
-      if (ctx.onDuplicate === "reject") return reject("该手机号或联系方式已存在");
+      if (ctx.onDuplicate === "reject") return reject("该学生已存在（同校区同名同号）");
       return mergeInto(existing, sourceDetail, ctx, now, tomorrow, payload);
     }
 
@@ -266,14 +273,18 @@ export async function importLead(input: LeadImportInput, ctx: ImportContext): Pr
       });
       studentId = created.id;
     } catch (e: unknown) {
-      // 并发下 phone 唯一约束可能撞车：退回按合并处理。
+      // 并发下 (campusId, phone, name) 唯一约束可能撞车：退回按合并处理（仍限本校区同名）。
       if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
         const dup = await prisma.student.findFirst({
-          where: { OR: [{ phone: normPhone }, ...(normAppId ? [{ contactAppId: normAppId }] : [])] },
+          where: {
+            campusId,
+            name: normName,
+            OR: [{ phone: normPhone }, ...(normAppId ? [{ contactAppId: normAppId }] : [])],
+          },
           include: { leadInfo: true },
         });
         if (dup) {
-          if (ctx.onDuplicate === "reject") return reject("该手机号或联系方式已存在");
+          if (ctx.onDuplicate === "reject") return reject("该学生已存在（同校区同名同号）");
           return mergeInto(dup, sourceDetail, ctx, now, tomorrow, payload);
         }
       }
@@ -297,7 +308,16 @@ async function mergeInto(
   tomorrow: Date,
   payload: string,
 ): Promise<ImportOutcome> {
-  const authorId = await followUpAuthor(existing.campusId, existing.salesId, ctx.actorId);
+  // 公开表单（无登录、内容不可信）命中已有线索时：只记导入日志，不写跟进、不改状态。
+  // 否则任何人拿到公开 campaign token + 猜到某学生姓名/电话，就能往其档案塞跟进、把
+  // 「已流失」刷回「已联系」，污染归属方的待办与转化报表。
+  if (ctx.source === "PUBLIC_FORM") {
+    await logImport(ctx.source, ImportResult.MERGED, existing.id, "公开表单命中已有学生，仅记录未改档", payload);
+    return { result: "MERGED", studentId: existing.id };
+  }
+
+  // 已登录导入（CSV/手动/API）：跟进记录挂在操作者名下（不冒用归属方身份）。
+  const authorId = ctx.actorId ?? (await followUpAuthor(existing.campusId, existing.salesId, ctx.actorId));
 
   await prisma.$transaction(async (tx) => {
     if (authorId) {
@@ -306,7 +326,7 @@ async function mergeInto(
           studentId: existing.id,
           salesId: authorId,
           contactMethod: "PHONE",
-          content: `Re-engaged via ${sourceDetail} on ${torontoDateStr(now)}`,
+          content: `再次触达（${sourceDetail}）· ${torontoDateStr(now)}`,
           followedAt: now,
           nextFollowUp: tomorrow,
         },

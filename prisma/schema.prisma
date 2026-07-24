@@ -80,7 +80,8 @@ model Subject {
 model Student {
   id           String   @id @default(cuid())
   name         String
-  phone        String   @unique
+  // 家长手机号可被多个在读孩子共用，故不能全局唯一。同一学生的判定 = 同校区 + 同号 + 同名。
+  phone        String
   // 线索导入时年级可能未知，故可空。建档 UI 仍要求填写。
   gradeId      String?
   publicSchool String?
@@ -105,6 +106,9 @@ model Student {
   packages  CoursePackage[]
   lessons   ScheduledLesson[]
 
+  // 同校区 + 同号 + 同名 视为同一学生，防止重复建档；兄弟姐妹(同号不同名)不受限。
+  @@unique([campusId, phone, name])
+  @@index([phone])
   @@index([contactAppId])
 }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canCreatePackage, canCreateNewSignPackage, canCreateRenewalPackage, denyCrossCampus, denyNotOwner, ownerFilter, type SessionUser } from "@/lib/permissions";
+import { campusScope, canCreatePackage, canCreateNewSignPackage, canCreateRenewalPackage, canAccessPackages, canViewPackageFinancials, packageOwnerScope, denyCrossCampus, denyNotOwner, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -24,15 +24,19 @@ export async function GET(req: Request) {
   const page = Number(searchParams.get("page")) || 0;
 
   const sessionUser = session.user as SessionUser;
+  // 角色门禁：老师/HR 无权读课包（此前只校验登录，老师拿到 packageId 即可读全量财务）。
+  if (!canAccessPackages(sessionUser)) {
+    return NextResponse.json({ error: "无权查看课包" }, { status: 403 });
+  }
 
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
   if (studentId) where.studentId = studentId;
   const scope = campusScope(sessionUser);
-  const owner = ownerFilter(sessionUser);
+  const owner = packageOwnerScope(sessionUser); // 销售→自己名下 / 学管→自己负责 / 管理层·教务→全校区
   const studentWhere: Record<string, unknown> = {};
   if (scope) studentWhere.campusId = scope;
-  if (owner) studentWhere.salesId = owner.salesId; // 销售只看自己名下学生的课包
+  if (owner) Object.assign(studentWhere, owner);
   if (Object.keys(studentWhere).length) where.student = studentWhere;
 
   const include = {
@@ -44,17 +48,25 @@ export async function GET(req: Request) {
     deductions: { where: { reversedAt: null }, select: { hoursDeducted: true } },
   } as const;
 
+  // 教务能看到课包用于排课，但看不到金额（单价/总额）。
+  const stripMoney = !canViewPackageFinancials(sessionUser);
+  type Pkg = Awaited<ReturnType<typeof prisma.coursePackage.findMany>>[number] & { pricePerHour?: number; totalAmount?: number };
+  const shape = (rows: Pkg[]) =>
+    stripMoney
+      ? rows.map(({ pricePerHour: _p, totalAmount: _t, ...rest }) => rest)
+      : rows;
+
   if (page >= 1) {
     const pageSize = 20;
     const [items, total] = await prisma.$transaction([
       prisma.coursePackage.findMany({ where, include, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
       prisma.coursePackage.count({ where }),
     ]);
-    return NextResponse.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+    return NextResponse.json({ items: shape(items as Pkg[]), total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
   }
 
   const packages = await prisma.coursePackage.findMany({ where, include, orderBy: { createdAt: "desc" } });
-  return NextResponse.json(packages);
+  return NextResponse.json(shape(packages as Pkg[]));
 }
 
 export async function POST(req: Request) {

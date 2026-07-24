@@ -4,9 +4,14 @@ import { prisma } from "@/lib/prisma";
 import {
   canEditActivePackage,
   canEditPendingPackage,
+  canAccessPackages,
+  canViewPackageFinancials,
+  canSeePackageOfStudent,
   denyCrossCampus,
+  hasRole,
   type SessionUser,
 } from "@/lib/permissions";
+import { Role } from "@/lib/enums";
 import { roundHours } from "@/lib/hours";
 import { z } from "zod";
 
@@ -14,11 +19,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const sessionUser = session.user as SessionUser;
+  if (!canAccessPackages(sessionUser)) {
+    return NextResponse.json({ error: "无权查看课包" }, { status: 403 });
+  }
+
   const { id } = await params;
   const pkg = await prisma.coursePackage.findUnique({
     where: { id },
     include: {
-      student: { select: { id: true, name: true, campusId: true } },
+      student: { select: { id: true, name: true, campusId: true, salesId: true, studentManagerId: true } },
       grade: true, subject: true,
       creator: { select: { name: true } },
       confirmer: { select: { name: true } },
@@ -36,9 +46,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const denied = denyCrossCampus(session.user as SessionUser, pkg.student.campusId);
+  const denied = denyCrossCampus(sessionUser, pkg.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+  // 归属：销售/学管只能看自己名下·负责的学生课包（管理层/教务全校区）。
+  if (!canSeePackageOfStudent(sessionUser, pkg.student)) {
+    return NextResponse.json({ error: "只能查看自己名下学生的课包" }, { status: 403 });
+  }
 
+  // 教务看不到金额。
+  if (!canViewPackageFinancials(sessionUser)) {
+    const { pricePerHour: _p, totalAmount: _t, ...rest } = pkg;
+    return NextResponse.json(rest);
+  }
   return NextResponse.json(pkg);
 }
 
@@ -51,7 +70,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   const pkg = await prisma.coursePackage.findUnique({
     where: { id },
-    include: { student: { select: { campusId: true } } },
+    include: { student: { select: { campusId: true, salesId: true } } },
   });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -61,6 +80,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   // 待审批课包原先直接短路掉整个角色检查，任何登录用户都能改价删单。
   if (!canEditPendingPackage(sessionUser)) {
     return NextResponse.json({ error: "无权修改课包" }, { status: 403 });
+  }
+  // 归属：销售只能改自己名下学生的课包，不能改同校区同事的单（管理层/财务不受限）。
+  if (!hasRole(sessionUser, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN) && pkg.student.salesId !== sessionUser.id) {
+    return NextResponse.json({ error: "只能修改自己名下学生的课包" }, { status: 403 });
   }
   // 已激活的课包只有财务能动。
   if (pkg.status !== "PENDING_APPROVAL" && !canEditActivePackage(sessionUser)) {
@@ -121,7 +144,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const pkg = await prisma.coursePackage.findUnique({
     where: { id },
-    include: { student: { select: { campusId: true } } },
+    include: {
+      student: { select: { campusId: true, salesId: true } },
+      _count: { select: { lessons: true, deductions: true } },
+    },
   });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -131,8 +157,15 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!canEditPendingPackage(sessionUser)) {
     return NextResponse.json({ error: "无权删除课包" }, { status: 403 });
   }
+  if (!hasRole(sessionUser, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN) && pkg.student.salesId !== sessionUser.id) {
+    return NextResponse.json({ error: "只能删除自己名下学生的课包" }, { status: 403 });
+  }
   if (pkg.status !== "PENDING_APPROVAL" && !canEditActivePackage(sessionUser)) {
     return NextResponse.json({ error: "已激活课包仅限财务删除" }, { status: 403 });
+  }
+  // 已排课或已有扣课记录的课包不能物理删除，否则外键报 500、学生阶段错误回退。
+  if (pkg._count.lessons > 0 || pkg._count.deductions > 0) {
+    return NextResponse.json({ error: "该课包已有排课或核销记录，不能删除" }, { status: 400 });
   }
 
   await prisma.coursePackage.delete({ where: { id } });

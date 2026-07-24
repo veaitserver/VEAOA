@@ -5,6 +5,7 @@ import { canConfirmLog, denyCrossCampus, type SessionUser } from "@/lib/permissi
 import { lessonHours, roundHours } from "@/lib/hours";
 
 class InsufficientHours extends Error {}
+class AlreadyConfirmed extends Error {}
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -49,6 +50,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // 幂等门闩：只有 confirmedAt 仍为 null 才核销。并发双击时第二个请求 count===0，
+      // 抛「已核销」而不重复扣课。撤销会把 confirmedAt 清回 null，故不影响重新核销。
+      const gate = await tx.lessonLog.updateMany({
+        where: { id: log.id, confirmedAt: null },
+        data: { confirmedById: sessionUser.id, confirmedAt: new Date() },
+      });
+      if (gate.count === 0) throw new AlreadyConfirmed();
+
       // 余额检查与扣减在同一条 updateMany 里完成：gte 谓词保证并发核销
       // 不会把余额扣成负数（count === 0 即余额不足，回滚）。
       const decremented = await tx.coursePackage.updateMany({
@@ -57,10 +66,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
       if (decremented.count === 0) throw new InsufficientHours();
 
-      const updatedLog = await tx.lessonLog.update({
-        where: { id: log.id },
-        data: { confirmedById: sessionUser.id, confirmedAt: new Date() },
-      });
+      const updatedLog = await tx.lessonLog.findUnique({ where: { id: log.id } });
 
       const deduction = await tx.courseDeduction.create({
         data: { packageId: lesson.packageId, logId: log.id, hoursDeducted: durationHours },
@@ -107,6 +113,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     return NextResponse.json(result);
   } catch (e) {
+    if (e instanceof AlreadyConfirmed) {
+      return NextResponse.json({ error: "该课程已核销" }, { status: 400 });
+    }
     if (e instanceof InsufficientHours) {
       return NextResponse.json({ error: "课包剩余课时不足，无法核销" }, { status: 400 });
     }

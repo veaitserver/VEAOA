@@ -200,6 +200,45 @@ export function canViewPackages(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+// ── 课包接口的访问与可见性 ────────────────────────────────────────────────────
+/**
+ * 谁能访问课包接口（列表/详情）：
+ * 销售/校长/财务/超管 + 学管(负责的学生续费) + 教务(排课要选课包)。
+ * 老师/HR 无权（老师此前能拿到 packageId 直接读全量财务，属越权信息泄露）。
+ */
+export function canAccessPackages(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.STUDENT_MANAGER, Role.ACADEMIC_ADMIN);
+}
+
+/** 谁能看到课包金额（单价/总额）：教务只排课、看不到钱。 */
+export function canViewPackageFinancials(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.STUDENT_MANAGER);
+}
+
+/**
+ * 课包列表的归属收敛（下推到 where.student）：
+ * 管理层/教务看全校区；销售看自己名下；学管看自己负责的学生。
+ */
+export function packageOwnerScope(
+  user: SessionUser,
+): { salesId: string } | { studentManagerId: string } | undefined {
+  if (hasRole(user, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.ACADEMIC_ADMIN)) return undefined;
+  if (hasRole(user, Role.SALES)) return { salesId: user.id };
+  if (hasRole(user, Role.STUDENT_MANAGER)) return { studentManagerId: user.id };
+  return { salesId: "__none__" }; // 兜底：其余角色查不到任何课包
+}
+
+/** 按 id 取到课包后，校验能否查看该学生的课包。管理层/教务放行(校区已单独校验)。 */
+export function canSeePackageOfStudent(
+  user: SessionUser,
+  student: { salesId: string | null; studentManagerId: string | null },
+): boolean {
+  if (hasRole(user, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.ACADEMIC_ADMIN)) return true;
+  if (hasRole(user, Role.SALES) && student.salesId === user.id) return true;
+  if (hasRole(user, Role.STUDENT_MANAGER) && student.studentManagerId === user.id) return true;
+  return false;
+}
+
 export function canViewSalesReport(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
