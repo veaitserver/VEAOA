@@ -5,6 +5,51 @@
 
 const TZ = "America/Toronto";
 
+/** 某 UTC 时刻在多伦多的时区偏移（毫秒）：多伦多墙钟读数 − UTC 读数。 */
+function torontoOffsetMs(utcMs: number): number {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+  const p = Object.fromEntries(fmt.formatToParts(new Date(utcMs)).map((x) => [x.type, x.value]));
+  // hour 可能是 "24"（午夜），归零。
+  const hour = p.hour === "24" ? 0 : Number(p.hour);
+  const asIfUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), hour, Number(p.minute), Number(p.second));
+  return asIfUtc - utcMs;
+}
+
+/**
+ * 把「多伦多墙钟」的日期+时间转成正确的 UTC 时刻。
+ * 排课录入的 16:00 指的是多伦多 16:00，不能按录入者浏览器所在时区解释。
+ * @param dateStr "YYYY-MM-DD"  @param timeStr "HH:MM"
+ */
+export function torontoWallTimeToUtc(dateStr: string, timeStr: string): Date {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const [h, mi] = timeStr.split(":").map(Number);
+  const guessUtc = Date.UTC(y, mo - 1, d, h, mi);
+  // 用「假设为 UTC 的那个时刻」的多伦多偏移反推真实 UTC（DST 切换那一小时内可能差 1h，业务可接受）。
+  return new Date(guessUtc - torontoOffsetMs(guessUtc));
+}
+
+/** 某时刻在多伦多的墙钟时/分。 */
+export function torontoClock(d: Date): { hour: number; minute: number } {
+  const off = torontoOffsetMs(d.getTime());
+  const local = new Date(d.getTime() + off);
+  return { hour: local.getUTCHours(), minute: local.getUTCMinutes() };
+}
+
+/** 某时刻在多伦多的日历日 key："YYYY-MM-DD"。用于按天分组/比较。 */
+export function torontoDateKey(d: Date): string {
+  const off = torontoOffsetMs(d.getTime());
+  return new Date(d.getTime() + off).toISOString().slice(0, 10);
+}
+
+/** 某时刻在多伦多的墙钟时间字符串 "HH:MM"（24 小时制）。 */
+export function formatTorontoTime(d: Date): string {
+  const { hour, minute } = torontoClock(d);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /** 取某个时刻在多伦多的日历年月日。 */
 function torontoParts(d: Date): { year: number; month: number; day: number } {
   const fmt = new Intl.DateTimeFormat("en-CA", {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD, roundHours } from "@/lib/hours";
+import { torontoWallTimeToUtc, torontoDateKey, torontoClock, formatTorontoTime } from "@/lib/datetime";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TEACHERS_PER_PAGE = 5;
@@ -43,27 +44,36 @@ type Package   = { id: string; grade: { name: string }; subject: { name: string 
 type Classroom = { id: string; name: string; campus: { name: string } };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// 日历统一按多伦多时间。每个“天”用「该多伦多日期的 UTC 正午」这个 Date 表示：
+// 正午 UTC 在 UTC±11 内都落在同一日历日，故 getUTCDate()/±天 的运算与显示都稳定，
+// 且不受排课者浏览器所在时区影响。
+const DAY_MS = 86_400_000;
+
+/** 多伦多“今天”的 UTC 正午 Date。 */
+function torontoTodayNoon(): Date {
+  return new Date(torontoDateKey(new Date()) + "T12:00:00.000Z");
+}
+
 function getMonday(d: Date): Date {
-  const date = new Date(d);
-  const day  = date.getDay();
-  date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
-  date.setHours(0, 0, 0, 0);
+  const date = new Date(d.getTime());
+  const day  = date.getUTCDay(); // 0=周日
+  date.setUTCDate(date.getUTCDate() - day + (day === 0 ? -6 : 1));
+  date.setUTCHours(12, 0, 0, 0);
   return date;
 }
 
+/** 两个时刻是否为同一多伦多日历日。 */
 function isSameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear()
-      && a.getMonth()    === b.getMonth()
-      && a.getDate()     === b.getDate();
+  return torontoDateKey(a) === torontoDateKey(b);
 }
 
 function fmtTime(d: Date) {
-  return d.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return formatTorontoTime(d);
 }
 
 function lessonTopPx(startIso: string) {
-  const d = new Date(startIso);
-  return Math.max(0, (d.getHours() + d.getMinutes() / 60 - DAY_START) * HOUR_PX);
+  const { hour, minute } = torontoClock(new Date(startIso));
+  return Math.max(0, (hour + minute / 60 - DAY_START) * HOUR_PX);
 }
 
 function lessonHeightPx(startIso: string, endIso: string) {
@@ -123,7 +133,7 @@ function TeacherTimetable({
               ${isToday ? "bg-blue-50 text-blue-600" : "text-slate-500"}`}>
               <div>{DAY_NAMES[i]}</div>
               <div className={`text-base font-bold mt-0.5 ${isToday ? "text-blue-600" : "text-slate-800"}`}>
-                {day.getDate()}
+                {day.getUTCDate()}
               </div>
             </div>
           );
@@ -405,10 +415,8 @@ function CreateModal({
 export default function SchedulePage() {
   const [teachers,   setTeachers]   = useState<Teacher[]>([]);
   const [teacherPage, setTeacherPage] = useState(0);
-  const [weekStart,  setWeekStart]  = useState<Date>(() => getMonday(new Date()));
-  const [selectedDay, setSelectedDay] = useState<Date>(() => {
-    const t = new Date(); t.setHours(0, 0, 0, 0); return t;
-  });
+  const [weekStart,  setWeekStart]  = useState<Date>(() => getMonday(torontoTodayNoon()));
+  const [selectedDay, setSelectedDay] = useState<Date>(() => torontoTodayNoon());
   const [lessons,    setLessons]    = useState<Lesson[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -424,11 +432,7 @@ export default function SchedulePage() {
   // Detail popup
   const [detail, setDetail] = useState<Lesson | null>(null);
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    return d;
-  });
+  const weekDays = Array.from({ length: 7 }, (_, i) => new Date(weekStart.getTime() + i * DAY_MS));
 
   const visibleTeachers = teachers.slice(
     teacherPage * TEACHERS_PER_PAGE,
@@ -447,8 +451,7 @@ export default function SchedulePage() {
 
   const loadLessons = useCallback(async () => {
     setLoading(true);
-    const end = new Date(weekStart);
-    end.setDate(end.getDate() + 7);
+    const end = new Date(weekStart.getTime() + 7 * DAY_MS);
     const res = await fetch(`/api/schedule?start=${weekStart.toISOString()}&end=${end.toISOString()}`);
     if (res.ok) setLessons(await res.json());
     setLoading(false);
@@ -459,20 +462,20 @@ export default function SchedulePage() {
   // Keep selectedDay in sync when week changes
   useEffect(() => {
     if (!weekDays.some(d => isSameDay(d, selectedDay))) {
-      setSelectedDay(new Date(weekStart));
+      setSelectedDay(new Date(weekStart.getTime()));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
-  function prevWeek() { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); }
-  function nextWeek() { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); }
-  function goToday()  { setWeekStart(getMonday(new Date())); const t = new Date(); t.setHours(0,0,0,0); setSelectedDay(t); }
+  function prevWeek() { setWeekStart(new Date(weekStart.getTime() - 7 * DAY_MS)); }
+  function nextWeek() { setWeekStart(new Date(weekStart.getTime() + 7 * DAY_MS)); }
+  function goToday()  { setWeekStart(getMonday(torontoTodayNoon())); setSelectedDay(torontoTodayNoon()); }
 
   function openModal(teacherId: string, day: Date, hour = 16) {
     const sh = String(hour).padStart(2, "0");
     const eh = String(Math.min(hour + 2, DAY_END)).padStart(2, "0");
     setModalTeacherId(teacherId);
-    setModalDate(day.toISOString().slice(0, 10));
+    setModalDate(torontoDateKey(day)); // 多伦多日历日，供保存时按多伦多时间解释
     setModalStart(`${sh}:00`);
     setModalEnd(`${eh}:00`);
     setModalError("");
@@ -483,8 +486,9 @@ export default function SchedulePage() {
     if (!modalTeacherId || !formData.studentId || !formData.packageId || !formData.classroomId) {
       setModalError("请填写所有必填字段"); return;
     }
-    const startTime = new Date(`${modalDate}T${modalStart}:00`);
-    const endTime   = new Date(`${modalDate}T${modalEnd}:00`);
+    // 录入的日期/时间是「多伦多墙钟」，按多伦多时区转成 UTC，避免按录入者浏览器时区存错。
+    const startTime = torontoWallTimeToUtc(modalDate, modalStart);
+    const endTime   = torontoWallTimeToUtc(modalDate, modalEnd);
     if (endTime <= startTime) { setModalError("结束时间须晚于开始时间"); return; }
     setModalError("");
     const res = await fetch("/api/schedule", {
@@ -496,8 +500,9 @@ export default function SchedulePage() {
     else { const d = await res.json(); setModalError(d.error); }
   }
 
-  const weekLabel = `${weekDays[0].toLocaleDateString("en-CA", { month: "long", day: "numeric" })} – ${weekDays[6].toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" })}`;
-  const today = new Date();
+  // 天对象是「多伦多日期的 UTC 正午」，用 timeZone:UTC 读出的正是该多伦多日期。
+  const weekLabel = `${weekDays[0].toLocaleDateString("en-CA", { timeZone: "UTC", month: "long", day: "numeric" })} – ${weekDays[6].toLocaleDateString("en-CA", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" })}`;
+  const today = torontoTodayNoon();
 
   return (
     <div className="space-y-4">
@@ -541,7 +546,7 @@ export default function SchedulePage() {
                     ? "bg-blue-50 text-blue-600 border border-blue-200"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
                 <span>{DAY_NAMES[i]}</span>
-                <span className="text-base font-bold mt-0.5">{day.getDate()}</span>
+                <span className="text-base font-bold mt-0.5">{day.getUTCDate()}</span>
               </button>
             );
           })}
@@ -550,7 +555,7 @@ export default function SchedulePage() {
         {/* Selected day headline */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">
-            {selectedDay.toLocaleDateString("en-CA", { month: "long", day: "numeric", weekday: "long" })}
+            {selectedDay.toLocaleDateString("en-CA", { timeZone: "UTC", month: "long", day: "numeric", weekday: "long" })}
           </h2>
           {/* Mobile legend */}
           <div className="flex gap-2 text-xs text-slate-400">
