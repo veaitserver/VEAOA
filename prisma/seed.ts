@@ -424,7 +424,9 @@ async function main() {
       totalHours: 20,
       pricePerHour: 80,
       totalAmount: 1600,
-      remainingHours: 15,
+      // 剩余 = 总课时 − 已核销（下方 ded-mkm-1 扣了 2h），两者必须自洽，
+      // 否则财务改课包时余额会按台账重算，把差额凭空补回来。
+      remainingHours: 18,
       status: "ACTIVE",
       createdById: salesMkm.id,
       confirmedById: "user-principal-mkm",
@@ -443,7 +445,7 @@ async function main() {
       totalHours: 30,
       pricePerHour: 90,
       totalAmount: 2700,
-      remainingHours: 28,
+      remainingHours: 30, // 无核销记录，剩余 = 总课时
       status: "ACTIVE",
       createdById: salesMkm.id,
       confirmedById: "user-principal-mkm",
@@ -477,10 +479,10 @@ async function main() {
       studentId: s5.id,
       gradeId: g11!.id,
       subjectId: subChem!.id,
-      totalHours: 24,
+      totalHours: 24, // 下方 ded-rh-1 扣 2h → 剩余 22
       pricePerHour: 85,
       totalAmount: 2040,
-      remainingHours: 20,
+      remainingHours: 22,
       status: "ACTIVE",
       createdById: salesRH.id,
       confirmedById: "user-principal-rh",
@@ -505,7 +507,10 @@ async function main() {
     },
   });
 
-  // Scarborough — 已生效且课时耗尽（已结课示例）
+  // Scarborough — 已生效且课时耗尽（已结课示例）。
+  // 注意：这条演示数据的消耗发生在系统上线前，故没有对应的扣课台账，
+  // remainingHours(0) 与「总课时 − 已核销」并不相等。真实业务里课时只能
+  // 通过核销消耗，两者始终自洽；这里保留是为了演示「已结课」学员状态。
   await prisma.coursePackage.upsert({
     where: { id: "pkg-scar-1" },
     update: {},
@@ -556,7 +561,7 @@ async function main() {
       totalHours: 20,
       pricePerHour: 80,
       totalAmount: 1600,
-      remainingHours: 18,
+      remainingHours: 20, // 无核销记录，剩余 = 总课时
       status: "ACTIVE",
       createdById: salesMiss.id,
       confirmedById: "user-admin",
