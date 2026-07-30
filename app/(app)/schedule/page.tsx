@@ -3,6 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD, roundHours } from "@/lib/hours";
 import { torontoWallTimeToUtc, torontoDateKey, torontoClock, formatTorontoTime } from "@/lib/datetime";
+import { useSession } from "next-auth/react";
+import { ATTENDANCE_LABELS } from "@/lib/enums";
+
+const ATTENDANCE_COLORS: Record<string, string> = {
+  PRESENT: "bg-green-100 text-green-700",
+  LEAVE: "bg-amber-100 text-amber-700",
+  NO_SHOW: "bg-red-100 text-red-700",
+};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TEACHERS_PER_PAGE = 5;
@@ -36,6 +44,8 @@ type Lesson = {
     lessonType: string;
     hasLog: boolean;
     isConfirmed: boolean;
+    attendance?: string | null;
+    attendanceNote?: string | null;
   };
 };
 
@@ -413,6 +423,7 @@ function CreateModal({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function SchedulePage() {
+  const { data: session } = useSession();
   const [teachers,   setTeachers]   = useState<Teacher[]>([]);
   const [teacherPage, setTeacherPage] = useState(0);
   const [weekStart,  setWeekStart]  = useState<Date>(() => getMonday(torontoTodayNoon()));
@@ -429,8 +440,63 @@ export default function SchedulePage() {
   const [modalEnd,       setModalEnd]       = useState("18:00");
   const [modalError,     setModalError]     = useState("");
 
-  // Detail popup
+  // Detail popup（含考勤 / 改期 / 删除）
   const [detail, setDetail] = useState<Lesson | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ date: "", start: "", end: "" });
+  const [detailError, setDetailError] = useState("");
+
+  const roles: string[] = (session?.user as { roles?: string[] })?.roles ?? [];
+  // 与后端 canSchedule 一致：老师/教务/校长/超管可改课表。
+  const canEditLesson = roles.some((r) => ["TEACHER", "ACADEMIC_ADMIN", "PRINCIPAL", "SUPER_ADMIN"].includes(r));
+
+  function closeDetail() {
+    setDetail(null); setEditing(false); setDetailError("");
+  }
+
+  function startEditing() {
+    if (!detail) return;
+    setEditForm({
+      date: torontoDateKey(new Date(detail.start)),
+      start: formatTorontoTime(new Date(detail.start)),
+      end: formatTorontoTime(new Date(detail.end)),
+    });
+    setDetailError("");
+    setEditing(true);
+  }
+
+  async function saveReschedule() {
+    if (!detail) return;
+    setDetailError("");
+    const startTime = torontoWallTimeToUtc(editForm.date, editForm.start);
+    const endTime = torontoWallTimeToUtc(editForm.date, editForm.end);
+    const res = await fetch(`/api/schedule/${detail.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startTime: startTime.toISOString(), endTime: endTime.toISOString() }),
+    });
+    if (res.ok) { closeDetail(); loadLessons(); }
+    else setDetailError((await res.json()).error ?? "改期失败");
+  }
+
+  async function deleteLesson() {
+    if (!detail) return;
+    setDetailError("");
+    const res = await fetch(`/api/schedule/${detail.id}`, { method: "DELETE" });
+    if (res.ok) { closeDetail(); loadLessons(); }
+    else setDetailError((await res.json()).error ?? "删除失败");
+  }
+
+  async function markAttendance(lessonId: string, attendance: string) {
+    setDetailError("");
+    const res = await fetch(`/api/lessons/${lessonId}/attendance`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attendance }),
+    });
+    if (res.ok) {
+      setDetail((d) => (d ? { ...d, extendedProps: { ...d.extendedProps, attendance } } : d));
+      loadLessons();
+    } else setDetailError((await res.json()).error ?? "标记失败");
+  }
 
   const weekDays = Array.from({ length: 7 }, (_, i) => new Date(weekStart.getTime() + i * DAY_MS));
 
@@ -441,9 +507,10 @@ export default function SchedulePage() {
   const totalPages = Math.ceil(teachers.length / TEACHERS_PER_PAGE);
 
   useEffect(() => {
-    fetch("/api/admin/users")
+    // 用排课专用接口：/api/admin/users 只对 HR/超管开放，教务打开日历会是空的。
+    fetch("/api/schedule/teachers")
       .then(r => r.ok ? r.json() : [])
-      .then((u: Teacher[]) => setTeachers(u.filter(x => x.roles.some(r => r.role === "TEACHER"))));
+      .then(setTeachers);
     fetch("/api/schedule/classrooms")
       .then(r => r.ok ? r.json() : [])
       .then(setClassrooms);
@@ -639,12 +706,12 @@ export default function SchedulePage() {
       {/* ── Detail popup ── */}
       {detail && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50"
-          onClick={() => setDetail(null)}>
+          onClick={closeDetail}>
           <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 shadow-xl"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-slate-800">课程详情</h2>
-              <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+              <button onClick={closeDetail} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
             </div>
             <div className="space-y-3 text-sm">
               {[
@@ -662,6 +729,89 @@ export default function SchedulePage() {
                 </div>
               ))}
             </div>
+
+            {/* 考勤：学生临时请假时在课表上直接标，标完再决定改期还是删除。 */}
+            {canEditLesson && !detail.extendedProps.isConfirmed && (
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-400">考勤</span>
+                  {detail.extendedProps.attendance ? (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ATTENDANCE_COLORS[detail.extendedProps.attendance]}`}>
+                      {ATTENDANCE_LABELS[detail.extendedProps.attendance]}
+                    </span>
+                  ) : <span className="text-xs text-slate-400">未标记</span>}
+                </div>
+                <div className="flex gap-2">
+                  {(["PRESENT", "LEAVE", "NO_SHOW"] as const).map((s) => (
+                    <button key={s} onClick={() => markAttendance(detail.id, s)}
+                      className={`flex-1 text-xs py-1.5 rounded border transition ${
+                        detail.extendedProps.attendance === s
+                          ? "border-blue-500 bg-blue-50 text-blue-700 font-medium"
+                          : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+                      {ATTENDANCE_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+                {detail.extendedProps.attendance === "LEAVE" && (
+                  <p className="text-xs text-amber-600 mt-2">1 对 1 请假不扣课时，可改期或删除该节课。</p>
+                )}
+              </div>
+            )}
+
+            {/* 改期 / 删除：像日历软件那样在课表上直接改。 */}
+            {canEditLesson && (
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                {detail.extendedProps.isConfirmed ? (
+                  <p className="text-xs text-slate-400">已核销的课程不能改期或删除，需财务先撤销核销。</p>
+                ) : editing ? (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">日期</label>
+                      <input type="date" value={editForm.date}
+                        onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">开始</label>
+                        <input type="time" value={editForm.start}
+                          onChange={(e) => setEditForm({ ...editForm, start: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">结束</label>
+                        <input type="time" value={editForm.end}
+                          onChange={(e) => setEditForm({ ...editForm, end: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                      </div>
+                    </div>
+                    {detailError && <p className="text-red-600 text-xs">{detailError}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={saveReschedule}
+                        className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+                        保存
+                      </button>
+                      <button onClick={() => { setEditing(false); setDetailError(""); }}
+                        className="px-4 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={startEditing}
+                      className="flex-1 border border-blue-300 text-blue-600 py-2 rounded-lg text-sm font-medium hover:bg-blue-50">
+                      改期
+                    </button>
+                    <button onClick={deleteLesson}
+                      className="flex-1 border border-red-300 text-red-600 py-2 rounded-lg text-sm font-medium hover:bg-red-50">
+                      删除
+                    </button>
+                  </div>
+                )}
+                {detailError && !editing && <p className="text-red-600 text-xs mt-2">{detailError}</p>}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1020,6 +1020,99 @@ async function run() {
   await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: attPkg.id } } });
   await prisma.scheduledLesson.deleteMany({ where: { packageId: attPkg.id } });
   await prisma.coursePackage.delete({ where: { id: attPkg.id } });
+
+  // ── 阶段 12：改期与删除（请假后的出口）──────────────────────────────────
+  console.log("\n阶段 12 — 改期与删除");
+  const rsPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
+    },
+  });
+  const mkRsLesson = async (offsetDays, hours = 2) => {
+    const s = new Date(fx.base.getTime() + offsetDays * 86400000);
+    return prisma.scheduledLesson.create({
+      data: {
+        teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: rsPkg.id,
+        classroomId: fx.rhRoom.id, startTime: s, endTime: new Date(s.getTime() + hours * 3600000),
+      },
+    });
+  };
+
+  const rsA = await mkRsLesson(100);
+  // 销售无权改期
+  const salesMove = await mkmSales.req("PUT", `/api/schedule/${rsA.id}`, {
+    startTime: new Date(fx.base.getTime() + 101 * 86400000).toISOString(),
+    endTime: new Date(fx.base.getTime() + 101 * 86400000 + 2 * 3600000).toISOString(),
+  });
+  check(12, "销售不得改期", blocked(salesMove), `实际 ${salesMove.status}`);
+
+  // 结束早于开始应被拒
+  const badTime = await rhPrincipal.req("PUT", `/api/schedule/${rsA.id}`, {
+    startTime: new Date(fx.base.getTime() + 101 * 86400000 + 2 * 3600000).toISOString(),
+    endTime: new Date(fx.base.getTime() + 101 * 86400000).toISOString(),
+  });
+  check(12, "改期结束时间须晚于开始", badTime.status === 400, `实际 ${badTime.status}`);
+
+  // 正常改期（同时长挪时间）：库存要排除自身，不能报「课时不足」
+  const newStart = new Date(fx.base.getTime() + 102 * 86400000);
+  const moved = await rhPrincipal.req("PUT", `/api/schedule/${rsA.id}`, {
+    startTime: newStart.toISOString(),
+    endTime: new Date(newStart.getTime() + 2 * 3600000).toISOString(),
+  });
+  const rsAAfter = await prisma.scheduledLesson.findUnique({ where: { id: rsA.id } });
+  check(12, "可改期（库存排除自身，不误报不足）",
+    moved.status === 200 && rsAAfter.startTime.getTime() === newStart.getTime(),
+    `HTTP ${moved.status}${moved.body?.error ? " " + moved.body.error : ""}`);
+
+  // 改期到与另一节课冲突的时段 → 409
+  const rsB = await mkRsLesson(105);
+  const clashMove = await rhPrincipal.req("PUT", `/api/schedule/${rsA.id}`, {
+    startTime: rsB.startTime.toISOString(),
+    endTime: rsB.endTime.toISOString(),
+  });
+  check(12, "改期撞课应被拒", clashMove.status === 409, `实际 ${clashMove.status}`);
+
+  // 改期后考勤重置
+  await rhPrincipal.req("POST", `/api/lessons/${rsA.id}/attendance`, { attendance: "LEAVE" });
+  await rhPrincipal.req("PUT", `/api/schedule/${rsA.id}`, {
+    startTime: new Date(fx.base.getTime() + 110 * 86400000).toISOString(),
+    endTime: new Date(fx.base.getTime() + 110 * 86400000 + 2 * 3600000).toISOString(),
+  });
+  const rsAReset = await prisma.scheduledLesson.findUnique({ where: { id: rsA.id } });
+  check(12, "改期后考勤重置为未标记", rsAReset.attendance === null, `实际 ${rsAReset.attendance}`);
+
+  // 请假 + 已有老师日志的课可以删除（否则永久卡在待办里）
+  const rsC = await mkRsLesson(115);
+  await prisma.lessonLog.create({
+    data: { lessonId: rsC.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "学生请假未到" },
+  });
+  await rhPrincipal.req("POST", `/api/lessons/${rsC.id}/attendance`, { attendance: "LEAVE" });
+  const delLeave = await rhPrincipal.req("DELETE", `/api/schedule/${rsC.id}`);
+  const rsCGone = await prisma.scheduledLesson.findUnique({ where: { id: rsC.id } });
+  check(12, "请假且有日志的课可删除（连同日志）", delLeave.status === 200 && rsCGone === null,
+    `HTTP ${delLeave.status}，记录 ${rsCGone ? "仍在" : "已删"}`);
+
+  // 已核销的课不得改期、不得删除
+  const rsD = await mkRsLesson(120);
+  await prisma.lessonLog.create({
+    data: { lessonId: rsD.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "正常上课" },
+  });
+  await rhPrincipal.req("POST", `/api/lessons/${rsD.id}/confirm`);
+  const moveConfirmed = await rhPrincipal.req("PUT", `/api/schedule/${rsD.id}`, {
+    startTime: new Date(fx.base.getTime() + 125 * 86400000).toISOString(),
+    endTime: new Date(fx.base.getTime() + 125 * 86400000 + 2 * 3600000).toISOString(),
+  });
+  check(12, "已核销的课不得改期", moveConfirmed.status === 400, `实际 ${moveConfirmed.status}`);
+  const delConfirmed = await rhPrincipal.req("DELETE", `/api/schedule/${rsD.id}`);
+  check(12, "已核销的课不得删除", delConfirmed.status === 400, `实际 ${delConfirmed.status}`);
+
+  // 清理
+  await prisma.courseDeduction.deleteMany({ where: { packageId: rsPkg.id } });
+  await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: rsPkg.id } } });
+  await prisma.scheduledLesson.deleteMany({ where: { packageId: rsPkg.id } });
+  await prisma.coursePackage.delete({ where: { id: rsPkg.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -1035,7 +1128,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

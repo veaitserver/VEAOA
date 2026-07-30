@@ -231,6 +231,10 @@ export default function LessonsPage() {
                     </td>
                   )}
                   <td className="px-4 py-3 text-right space-x-2">
+                    {/* 请假的课不扣课时也无法核销，改期/删除在排课日历上操作（像日历软件那样点开课程）。 */}
+                    {l.attendance === "LEAVE" && (
+                      <span className="text-xs text-slate-400">改期/删除请到排课日历</span>
+                    )}
                     {phase === "pending_log" && (isTeacher || userRoles.includes("SUPER_ADMIN")) && (
                       <button onClick={() => { setLogModal({ lessonId: l.id }); setLogForm({ subjectId: "", notes: "" }); setError(""); }}
                         className="bg-blue-600 text-white px-3 py-1 rounded text-xs font-medium hover:bg-blue-700">
@@ -264,6 +268,7 @@ export default function LessonsPage() {
         </table>
       </div>
       <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} />
+
 
       {/* Log submission modal */}
       {logModal && (
