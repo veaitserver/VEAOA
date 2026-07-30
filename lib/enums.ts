@@ -130,6 +130,21 @@ export const REFUND_STATUS_LABELS: Record<string, string> = {
   REJECTED: "已驳回",
 };
 
+// 考勤状态。扣不扣课时由 lib/attendance 的 shouldDeductHours 统一裁决，
+// 不要在各路由里各写一套判断。
+export const AttendanceStatus = {
+  PRESENT: "PRESENT",   // 到课
+  LEAVE: "LEAVE",       // 请假（提前告知）
+  NO_SHOW: "NO_SHOW",   // 旷课（未到且未请假）
+} as const;
+export type AttendanceStatus = (typeof AttendanceStatus)[keyof typeof AttendanceStatus];
+
+export const ATTENDANCE_LABELS: Record<string, string> = {
+  PRESENT: "到课",
+  LEAVE: "请假",
+  NO_SHOW: "旷课",
+};
+
 export const LessonType = {
   ONE_ON_ONE: "ONE_ON_ONE",
   GROUP: "GROUP",

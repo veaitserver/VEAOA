@@ -4,10 +4,19 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { formatDate, formatTime } from "@/lib/utils";
 import { isDeductionLocked } from "@/lib/lock";
+import { ATTENDANCE_LABELS } from "@/lib/enums";
+import { shouldDeductHours } from "@/lib/attendance";
 import Pagination from "@/components/Pagination";
+
+const ATTENDANCE_COLORS: Record<string, string> = {
+  PRESENT: "bg-green-100 text-green-700",
+  LEAVE: "bg-amber-100 text-amber-700",
+  NO_SHOW: "bg-red-100 text-red-700",
+};
 
 type Lesson = {
   id: string; startTime: string; endTime: string; lessonType: string;
+  attendance?: string | null; attendanceNote?: string | null;
   teacher: { id: string; name: string };
   student: { id: string; name: string };
   classroom: { name: string };
@@ -113,6 +122,15 @@ export default function LessonsPage() {
     else { const d = await res.json(); alert(d.error); }
   }
 
+  async function markAttendance(lessonId: string, attendance: string) {
+    const res = await fetch(`/api/lessons/${lessonId}/attendance`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attendance }),
+    });
+    if (res.ok) load();
+    else { const d = await res.json(); alert(d.error); }
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-800">核销管理</h1>
@@ -136,21 +154,23 @@ export default function LessonsPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <table className="w-full">
+      {/* 加了「考勤」列后表格变宽，窄屏需要横向滚动，否则操作按钮会被裁掉。 */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+        <table className="w-full min-w-[900px]">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">时间</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">学生</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">老师</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">科目 / 课时</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">考勤</th>
               {phase !== "pending_log" && <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">日志</th>}
               <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">加载中...</td></tr>}
-            {!loading && lessons.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">暂无记录</td></tr>}
+            {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">加载中...</td></tr>}
+            {!loading && lessons.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">暂无记录</td></tr>}
             {lessons.map(l => {
               const durationH = (new Date(l.endTime).getTime() - new Date(l.startTime).getTime()) / 3600000;
               return (
@@ -166,6 +186,30 @@ export default function LessonsPage() {
                   <td className="px-4 py-3 text-sm text-slate-500">
                     {l.package.subject.name} · {durationH.toFixed(1)}h
                     <div className="text-xs text-slate-400">{l.classroom.name}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {l.attendance ? (
+                      <>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ATTENDANCE_COLORS[l.attendance]}`}>
+                          {ATTENDANCE_LABELS[l.attendance] ?? l.attendance}
+                        </span>
+                        {!shouldDeductHours(l.attendance) && (
+                          <div className="text-xs text-slate-400 mt-1">不扣课时</div>
+                        )}
+                      </>
+                    ) : canConfirm && !l.log?.confirmedAt ? (
+                      // 未标记默认按到课处理；这里给教务快捷改判请假/旷课。
+                      <div className="flex gap-1">
+                        {(["LEAVE", "NO_SHOW"] as const).map((s) => (
+                          <button key={s} onClick={() => markAttendance(l.id, s)}
+                            className="text-xs px-2 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-100">
+                            标{ATTENDANCE_LABELS[s]}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
                   </td>
                   {phase !== "pending_log" && (
                     <td className="px-4 py-3 text-xs text-slate-600 max-w-xs">

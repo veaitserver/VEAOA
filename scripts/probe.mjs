@@ -948,6 +948,78 @@ async function run() {
   check(10, "教务不得查看学生账户流水", blocked(acadLedger), `实际 ${acadLedger.status}`);
 
   await cleanupRefund();
+
+  // ── 阶段 11：考勤与请假扣课政策 ──────────────────────────────────────────
+  console.log("\n阶段 11 — 考勤与请假");
+  const attPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 20, pricePerHour: 100, totalAmount: 2000, remainingHours: 20,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
+    },
+  });
+  const mkAttLesson = async (offsetDays) => {
+    const s = new Date(fx.base.getTime() + offsetDays * 86400000);
+    const les = await prisma.scheduledLesson.create({
+      data: {
+        teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: attPkg.id,
+        classroomId: fx.rhRoom.id, startTime: s, endTime: new Date(s.getTime() + 2 * 3600000),
+      },
+    });
+    await prisma.lessonLog.create({
+      data: { lessonId: les.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id, notes: "考勤测试" },
+    });
+    return les;
+  };
+
+  // 老师无权标考勤
+  const attA = await mkAttLesson(80);
+  const teacherMark = await t2.req("POST", `/api/lessons/${attA.id}/attendance`, { attendance: "LEAVE" });
+  check(11, "老师不得标记考勤", blocked(teacherMark), `实际 ${teacherMark.status}`);
+
+  // 别校区教务（Markham）不得标 RH 的课
+  const xCampusMark = await acad.req("POST", `/api/lessons/${attA.id}/attendance`, { attendance: "PRESENT" });
+  check(11, "别校区教务不得标记考勤", blocked(xCampusMark), `实际 ${xCampusMark.status}`);
+
+  // 本校区管理层标请假 → 1对1 不扣课时，核销被拒
+  const markLeave = await rhPrincipal.req("POST", `/api/lessons/${attA.id}/attendance`, { attendance: "LEAVE", note: "家长提前请假" });
+  check(11, "本校区管理层可标记请假", markLeave.status === 200 && markLeave.body?.attendance === "LEAVE",
+    `HTTP ${markLeave.status}，考勤 ${markLeave.body?.attendance}`);
+
+  const confirmLeave = await rhPrincipal.req("POST", `/api/lessons/${attA.id}/confirm`);
+  const pkgAfterLeave = await prisma.coursePackage.findUnique({ where: { id: attPkg.id } });
+  check(11, "1对1 请假不扣课时（核销被拒、余额不动）",
+    confirmLeave.status === 400 && Number(pkgAfterLeave.remainingHours) === 20,
+    `HTTP ${confirmLeave.status}，剩余 ${pkgAfterLeave.remainingHours}h（应 20）`);
+
+  // 旷课照扣
+  const attB = await mkAttLesson(81);
+  await rhPrincipal.req("POST", `/api/lessons/${attB.id}/attendance`, { attendance: "NO_SHOW" });
+  const confirmNoShow = await rhPrincipal.req("POST", `/api/lessons/${attB.id}/confirm`);
+  const pkgAfterNoShow = await prisma.coursePackage.findUnique({ where: { id: attPkg.id } });
+  check(11, "旷课照扣课时", confirmNoShow.status === 200 && Number(pkgAfterNoShow.remainingHours) === 18,
+    `HTTP ${confirmNoShow.status}，剩余 ${pkgAfterNoShow.remainingHours}h（应 18）`);
+
+  // 已核销的课不能改考勤（否则会出现「标了请假但课时已扣」）
+  const lateMark = await rhPrincipal.req("POST", `/api/lessons/${attB.id}/attendance`, { attendance: "LEAVE" });
+  check(11, "已核销的课不得改考勤", lateMark.status === 400, `实际 ${lateMark.status}`);
+
+  // 未标考勤按到课处理，核销照常（保持既有行为）
+  const attC = await mkAttLesson(82);
+  const confirmDefault = await rhPrincipal.req("POST", `/api/lessons/${attC.id}/confirm`);
+  const pkgDefault = await prisma.coursePackage.findUnique({ where: { id: attPkg.id } });
+  check(11, "未标考勤默认按到课核销", confirmDefault.status === 200 && Number(pkgDefault.remainingHours) === 16,
+    `HTTP ${confirmDefault.status}，剩余 ${pkgDefault.remainingHours}h（应 16）`);
+
+  // 跨校区不得标考勤
+  const xAtt = await mkmSales.req("POST", `/api/lessons/${attA.id}/attendance`, { attendance: "PRESENT" });
+  check(11, "销售不得标记考勤", blocked(xAtt), `实际 ${xAtt.status}`);
+
+  // 清理
+  await prisma.courseDeduction.deleteMany({ where: { packageId: attPkg.id } });
+  await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: attPkg.id } } });
+  await prisma.scheduledLesson.deleteMany({ where: { packageId: attPkg.id } });
+  await prisma.coursePackage.delete({ where: { id: attPkg.id } });
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -963,7 +1035,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

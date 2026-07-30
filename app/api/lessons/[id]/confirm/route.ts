@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canConfirmLog, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { lessonHours, roundHours, isLowOnHours } from "@/lib/hours";
+import { shouldDeductHours, noDeductReason } from "@/lib/attendance";
 
 class InsufficientHours extends Error {}
 class AlreadyConfirmed extends Error {}
@@ -31,6 +32,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   // 核销会真金白银地扣课时，跨校区绝不能放行。
   const denied = denyCrossCampus(sessionUser, lesson.student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 考勤裁决是否扣课时。1对1 请假不扣 —— 这类课不进核销，教务应改期或删除。
+  if (!shouldDeductHours(lesson.attendance, lesson.lessonType === "GROUP" ? "GROUP" : "ONE_ON_ONE")) {
+    return NextResponse.json(
+      { error: noDeductReason(lesson.attendance, "ONE_ON_ONE") ?? "该课程按考勤不扣课时，无需核销" },
+      { status: 400 },
+    );
+  }
 
   if (!lesson.log) return NextResponse.json({ error: "老师尚未提交日志" }, { status: 400 });
   // 判「生效中的」扣课记录，而不是判存在性 —— 撤销后允许重新核销。

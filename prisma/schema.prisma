@@ -36,6 +36,7 @@ model User {
   refundsApproved    RefundRequest[]   @relation("RefundApprover")
   refundsPaid        RefundRequest[]   @relation("RefundPayer")
   refundsRejected    RefundRequest[]   @relation("RefundRejecter")
+  attendanceMarked   ScheduledLesson[] @relation("AttendanceMarker")
 }
 
 model UserRole {
@@ -232,11 +233,18 @@ model ScheduledLesson {
   endTime     DateTime
   lessonType  String   @default("ONE_ON_ONE")
   createdAt   DateTime @default(now())
+  // 考勤：PRESENT 到课 / LEAVE 请假 / NO_SHOW 旷课；null = 尚未标记（按到课处理）。
+  // 扣不扣课时由考勤决定：1对1 请假不扣、旷课照扣；班课请假默认照扣（可手动撤销）。
+  attendance     String?
+  attendanceNote String?
+  attendanceById String?
+  attendanceAt   DateTime?
 
   teacher   User          @relation(fields: [teacherId], references: [id])
   student   Student       @relation(fields: [studentId], references: [id])
   package   CoursePackage @relation(fields: [packageId], references: [id])
   classroom Classroom     @relation(fields: [classroomId], references: [id])
+  attendanceMarker User?  @relation("AttendanceMarker", fields: [attendanceById], references: [id])
 
   log LessonLog?
 }
