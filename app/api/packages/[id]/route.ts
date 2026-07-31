@@ -14,6 +14,8 @@ import {
 import { Role } from "@/lib/enums";
 import { roundHours } from "@/lib/hours";
 import { settlableHours } from "@/lib/settlement";
+import { recordEntries, packageAmountAdjustDrafts } from "@/lib/ledger";
+import { roundMoney } from "@/lib/money";
 import { z } from "zod";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -127,7 +129,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       if (changesTotalHours && totalHours < consumed) {
         throw new PkgUpdateError(`总课时不能低于已消耗课时（已消耗 ${consumed}h）`);
       }
-      return tx.coursePackage.update({
+      const row = await tx.coursePackage.update({
         where: { id },
         data: {
           ...parsed.data,
@@ -135,6 +137,19 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         },
         include: { grade: true, subject: true },
       });
+
+      // 已生效课包改了金额 → 补记账本，否则账本停留在旧价、与课包价值脱节。
+      const delta = roundMoney(totalAmount - Number(pkg.totalAmount));
+      if (pkg.status === "ACTIVE" && Math.abs(delta) >= 0.005) {
+        await recordEntries(tx, sessionUser.id, packageAmountAdjustDrafts({
+          studentId: pkg.studentId,
+          packageId: id,
+          delta,
+          label: `${row.grade.name} · ${row.subject.name}`,
+        }));
+      }
+
+      return row;
     });
     return NextResponse.json(updated);
   } catch (e) {

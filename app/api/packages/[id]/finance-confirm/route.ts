@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canFinanceConfirmPackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
+import { recordEntries, packageActivationDrafts } from "@/lib/ledger";
+import { roundMoney } from "@/lib/money";
 
 /**
  * 财务二次确认课包：校长确认(PENDING_FINANCE) → 财务确认 → 正式生效(ACTIVE)。
@@ -19,7 +21,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const pkg = await prisma.coursePackage.findUnique({
     where: { id },
-    include: { student: { select: { campusId: true } } },
+    include: {
+      student: { select: { campusId: true } },
+      grade: { select: { name: true } },
+      subject: { select: { name: true } },
+    },
   });
   if (!pkg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -30,14 +36,36 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "课包不是待财务确认状态" }, { status: 400 });
   }
 
-  const updated = await prisma.coursePackage.update({
-    where: { id },
-    data: {
-      status: "ACTIVE",
-      financeConfirmedById: sessionUser.id,
-      financeConfirmedAt: new Date(),
-    },
+  // 生效与记账在同一事务：财务确认这一刻既是「钱到账」也是「课时可用」，
+  // 两者不能只成一半，否则账本和课包对不上。
+  const updated = await prisma.$transaction(async (tx) => {
+    const gate = await tx.coursePackage.updateMany({
+      where: { id, status: "PENDING_FINANCE" },
+      data: {
+        status: "ACTIVE",
+        financeConfirmedById: sessionUser.id,
+        financeConfirmedAt: new Date(),
+      },
+    });
+    if (gate.count === 0) throw new AlreadyConfirmed();
+
+    await recordEntries(tx, sessionUser.id, packageActivationDrafts({
+      studentId: pkg.studentId,
+      packageId: pkg.id,
+      amount: roundMoney(Number(pkg.totalAmount)),
+      label: `${pkg.grade.name} · ${pkg.subject.name} ${pkg.totalHours}h`,
+    }));
+
+    return tx.coursePackage.findUnique({ where: { id } });
+  }).catch((e) => {
+    if (e instanceof AlreadyConfirmed) return null;
+    throw e;
   });
 
+  if (!updated) {
+    return NextResponse.json({ error: "课包不是待财务确认状态" }, { status: 400 });
+  }
   return NextResponse.json(updated);
 }
+
+class AlreadyConfirmed extends Error {}

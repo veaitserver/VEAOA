@@ -163,6 +163,9 @@ async function setup() {
 
 async function teardown() {
   await prisma.scheduledLesson.deleteMany({ where: { studentId: fx.student.id } });
+  // 课包生效会写账本流水、退费会建申请，两者都外键指向学生，删学生前先清掉。
+  await prisma.ledgerEntry.deleteMany({ where: { studentId: fx.student.id } });
+  await prisma.refundRequest.deleteMany({ where: { studentId: fx.student.id } });
   await prisma.coursePackage.deleteMany({ where: { studentId: fx.student.id } });
   await prisma.student.deleteMany({ where: { phone: FIX.studentPhone } });
   await prisma.classroom.deleteMany({ where: { id: "room-rh-probe" } });
@@ -749,6 +752,16 @@ async function run() {
   check(7, "财务确认后正式生效 ACTIVE", confirmF.status === 200 && afterF.status === "ACTIVE",
     `HTTP ${confirmF.status}，状态 ${afterF.status}`);
 
+  // 生效即入账：收款 + 课包扣款两条，净额为 0
+  const actEntries = await prisma.ledgerEntry.findMany({ where: { packageId: twoStepPkg.id } });
+  const actNet = Math.round(actEntries.reduce((s, e) => s + Number(e.amount), 0) * 100) / 100;
+  const hasPay = actEntries.some((e) => e.type === "PAYMENT" && Number(e.amount) === 1000);
+  const hasCharge = actEntries.some((e) => e.type === "PACKAGE_CHARGE" && Number(e.amount) === -1000);
+  check(7, "课包生效即写签约收款与课包扣款（净 0）",
+    actEntries.length === 2 && hasPay && hasCharge && actNet === 0,
+    `流水 ${actEntries.length} 条，净额 $${actNet}（应 2 条 / $0）`);
+
+  await prisma.ledgerEntry.deleteMany({ where: { packageId: twoStepPkg.id } });
   await prisma.coursePackage.delete({ where: { id: twoStepPkg.id } });
 
   // ── 阶段 8：核销财务锁（确认满一周自动锁，财务可解锁）────────────────────

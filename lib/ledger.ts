@@ -59,6 +59,47 @@ export async function studentBalance(db: Db, studentId: string): Promise<number>
 }
 
 /**
+ * 课包生效的两条流水：家长把钱交进账户，课包随即占用掉这笔价值。
+ * 余额净变化为 0 —— 钱收了、也全部转成了课时，账面平。
+ *
+ * 写在「财务确认生效」那一刻，因为那正是财务核实收款的节点；
+ * 待审批阶段还没收钱，不该记账。
+ */
+export function packageActivationDrafts(args: {
+  studentId: string;
+  packageId: string;
+  amount: number;
+  label: string;
+}): LedgerDraft[] {
+  return [
+    { studentId: args.studentId, type: LedgerType.PAYMENT, amount: args.amount, packageId: args.packageId, note: `签约收款：${args.label}` },
+    { studentId: args.studentId, type: LedgerType.PACKAGE_CHARGE, amount: -args.amount, packageId: args.packageId, note: `课包扣款：${args.label}` },
+  ];
+}
+
+/**
+ * 生效后课包金额被改动时的补记流水，保证账本与课包价值不脱节。
+ * 涨价 → 家长补交（收款 + 课包再占用，净 0）；
+ * 降价 → 课包释放价值回账户（余额转正，即机构欠家长这笔）。
+ */
+export function packageAmountAdjustDrafts(args: {
+  studentId: string;
+  packageId: string;
+  delta: number; // 正 = 涨价，负 = 降价
+  label: string;
+}): LedgerDraft[] {
+  if (args.delta > 0) {
+    return [
+      { studentId: args.studentId, type: LedgerType.PAYMENT, amount: args.delta, packageId: args.packageId, note: `课包调增补收：${args.label}` },
+      { studentId: args.studentId, type: LedgerType.PACKAGE_CHARGE, amount: -args.delta, packageId: args.packageId, note: `课包调增占用：${args.label}` },
+    ];
+  }
+  return [
+    { studentId: args.studentId, type: LedgerType.PACKAGE_CHARGE, amount: -args.delta, packageId: args.packageId, note: `课包调减释放：${args.label}` },
+  ];
+}
+
+/**
  * 退费的两条流水：剩余价值退回账户，再把钱打出去。
  * 余额净变化为 0 —— 账面上「课时没了、钱也出去了」，两边都留痕。
  */
