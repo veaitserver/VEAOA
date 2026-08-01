@@ -111,6 +111,10 @@ export async function POST(req: Request) {
     if (pkg.studentId !== studentId) {
       return NextResponse.json({ error: "课包不属于该学生" }, { status: 400 });
     }
+    // 班课课包只能通过班级排课，不能走单人排课，否则课时会绕开班级消耗。
+    if (pkg.classType === "GROUP") {
+      return NextResponse.json({ error: "班课课包请通过班级排课，不能单独排课" }, { status: 400 });
+    }
 
     const durationHours = lessonHours(new Date(startTime), new Date(endTime));
 

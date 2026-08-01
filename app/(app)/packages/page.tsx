@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { formatMoney, formatRate } from "@/lib/utils";
 import { isDepleted, isLowOnHours } from "@/lib/hours";
-import { SIGNING_TYPE_LABELS } from "@/lib/enums";
+import { SIGNING_TYPE_LABELS, CLASS_TYPE_LABELS } from "@/lib/enums";
 import Pagination from "@/components/Pagination";
 
 type Package = {
-  id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
+  id: string; status: string; signingType: string; classType: string; totalHours: string; remainingHours: string;
   pricePerHour: string; totalAmount: string; createdAt: string;
   student: { id: string; name: string };
   grade: { name: string }; subject: { name: string };
@@ -95,6 +95,9 @@ export default function PackagesPage() {
                 <td className="px-4 py-3 text-sm text-slate-600">
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium mr-1.5 ${SIGNING_COLORS[p.signingType] ?? "bg-slate-100 text-slate-600"}`}>
                     {SIGNING_TYPE_LABELS[p.signingType] ?? p.signingType}
+                  </span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium mr-1.5 ${p.classType === "GROUP" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-600"}`}>
+                    {CLASS_TYPE_LABELS[p.classType] ?? p.classType}
                   </span>
                   {p.grade.name} · {p.subject.name}
                 </td>

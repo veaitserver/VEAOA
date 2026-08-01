@@ -192,6 +192,9 @@ model CoursePackage {
   remainingHours Float
   status         String    @default("PENDING_APPROVAL")
   signingType    String    @default("NEW_SIGN") // 签约类型：新签 NEW_SIGN / 续费 RENEWAL（首张新签，之后续费）
+  // 授课形式：ONE_ON_ONE 一对一 / GROUP 班课。签约时定死，与 signingType 是两个维度。
+  // 只有 GROUP 课包能加入班级；ONE_ON_ONE 走单人排课。
+  classType      String    @default("ONE_ON_ONE")
   createdById    String
   confirmedById  String?    // 校长确认人
   confirmedAt    DateTime?

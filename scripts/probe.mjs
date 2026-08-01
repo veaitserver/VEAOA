@@ -859,7 +859,28 @@ async function run() {
   check(9, "校长可兜底建续费", pRenew.status === 201 && pRenew.body.signingType === "RENEWAL",
     `HTTP ${pRenew.status}，类型 ${pRenew.body?.signingType}`);
 
+  // 授课形式：默认一对一；班课课包不能走单人排课
+  const grpPkgRes = await mkmPrincipal.req("POST", "/api/packages", { ...pkgBody, classType: "GROUP" });
+  check(9, "可创建班课课包(classType=GROUP)",
+    grpPkgRes.status === 201 && grpPkgRes.body?.classType === "GROUP",
+    `HTTP ${grpPkgRes.status}，形式 ${grpPkgRes.body?.classType}`);
+  check(9, "课包默认授课形式为一对一", newSign.body?.classType === "ONE_ON_ONE",
+    `实际 ${newSign.body?.classType}`);
+
+  await prisma.coursePackage.update({ where: { id: grpPkgRes.body.id }, data: { status: "ACTIVE" } });
+  const grpRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-markham" } });
+  const grpSchedStart = new Date(fx.base.getTime() + 130 * 86400000);
+  const grpSched = await acadMkm.req("POST", "/api/schedule", {
+    teacherId: mkmTeacherRow.id, studentId: signStudent.id, packageId: grpPkgRes.body.id,
+    classroomId: grpRoom.id,
+    startTime: grpSchedStart.toISOString(),
+    endTime: new Date(grpSchedStart.getTime() + 2 * 3600000).toISOString(),
+  });
+  check(9, "班课课包不得单独排课", grpSched.status === 400, `实际 ${grpSched.status}`);
+  if (grpSched.status === 201) await prisma.scheduledLesson.deleteMany({ where: { id: grpSched.body.id } });
+
   // 清理
+  await prisma.ledgerEntry.deleteMany({ where: { studentId: signStudent.id } });
   await prisma.coursePackage.deleteMany({ where: { studentId: signStudent.id } });
   await prisma.followUp.deleteMany({ where: { studentId: signStudent.id } });
   await prisma.lead.deleteMany({ where: { studentId: signStudent.id } });

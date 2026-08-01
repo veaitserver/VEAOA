@@ -5,12 +5,12 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatMoney, formatRate, formatDate, formatDateTime } from "@/lib/utils";
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD } from "@/lib/hours";
-import { SIGNING_TYPE_LABELS } from "@/lib/enums";
+import { SIGNING_TYPE_LABELS, CLASS_TYPE_LABELS } from "@/lib/enums";
 
 type Refundable = { hours: number; remainingHours: number; pendingHours: number };
 
 type Package = {
-  id: string; status: string; signingType: string; totalHours: string; remainingHours: string;
+  id: string; status: string; signingType: string; classType: string; totalHours: string; remainingHours: string;
   refundable?: Refundable;
   pricePerHour: string; totalAmount: string; notes?: string; createdAt: string;
   confirmedAt?: string; financeConfirmedAt?: string;
@@ -131,6 +131,9 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         </span>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pkg.signingType === "RENEWAL" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
           {SIGNING_TYPE_LABELS[pkg.signingType] ?? pkg.signingType}
+        </span>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pkg.classType === "GROUP" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-600"}`}>
+          {CLASS_TYPE_LABELS[pkg.classType] ?? pkg.classType}
         </span>
       </div>
 

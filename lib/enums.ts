@@ -97,6 +97,18 @@ export const SIGNING_TYPE_LABELS: Record<string, string> = {
   RENEWAL: "续费",
 };
 
+// 授课形式。只有班课(GROUP)课包能加入班级；一对一走单人排课。
+export const ClassType = {
+  ONE_ON_ONE: "ONE_ON_ONE",
+  GROUP: "GROUP",
+} as const;
+export type ClassType = (typeof ClassType)[keyof typeof ClassType];
+
+export const CLASS_TYPE_LABELS: Record<string, string> = {
+  ONE_ON_ONE: "一对一",
+  GROUP: "班课",
+};
+
 // 账本流水类型。正负号约定：+ 价值进入学生账户，− 价值离开。
 // 余额 = 全部流水之和；正常结清后应为 0。
 export const LedgerType = {

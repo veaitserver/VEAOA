@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canCreatePackage, canCreateNewSignPackage, canCreateRenewalPackage, canAccessPackages, canViewPackageFinancials, packageOwnerScope, denyCrossCampus, denyNotOwner, type SessionUser } from "@/lib/permissions";
+import { ClassType } from "@/lib/enums";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -12,6 +13,7 @@ const createSchema = z.object({
   totalHours: z.number().positive().max(10000).finite(),
   pricePerHour: z.number().positive().max(100000).finite(),
   totalAmount: z.number().positive().max(1_000_000_000).finite(),
+  classType: z.nativeEnum(ClassType).default(ClassType.ONE_ON_ONE),
   notes: z.string().max(2000).optional(),
 });
 
@@ -83,7 +85,7 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
-  const { studentId, gradeId, subjectId, totalHours, pricePerHour, totalAmount, notes } = parsed.data;
+  const { studentId, gradeId, subjectId, totalHours, pricePerHour, totalAmount, classType, notes } = parsed.data;
 
   // 总价 === 总课时 × 单价，折扣打在单价上。
   if (Math.abs(totalAmount - totalHours * pricePerHour) > 0.01) {
@@ -131,6 +133,7 @@ export async function POST(req: Request) {
       createdById: sessionUser.id,
       status: "PENDING_APPROVAL",
       signingType: isRenewal ? "RENEWAL" : "NEW_SIGN",
+      classType,
     },
     include: {
       student: { select: { name: true } },

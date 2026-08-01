@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { formatPhone } from "@/lib/utils";
+import { CLASS_TYPE_LABELS } from "@/lib/enums";
 
 type Grade = { id: string; name: string };
 type Subject = { id: string; name: string };
@@ -22,6 +23,7 @@ function NewPackageForm() {
     studentId: preselectedStudentId,
     gradeId: "", subjectId: "", notes: "",
     totalHours: "", pricePerHour: "", totalAmount: "",
+    classType: "ONE_ON_ONE",
   });
   const [error, setError] = useState("");
   const lastEdited = useRef<"H" | "P" | "M" | null>(null);
@@ -67,6 +69,7 @@ function NewPackageForm() {
         totalHours: parseFloat(form.totalHours),
         pricePerHour: parseFloat(form.pricePerHour),
         totalAmount: parseFloat(form.totalAmount),
+        classType: form.classType,
         notes: form.notes,
       }),
     });
@@ -130,6 +133,26 @@ function NewPackageForm() {
                 {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">授课形式 *</label>
+            <div className="flex gap-2">
+              {(["ONE_ON_ONE", "GROUP"] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setForm({ ...form, classType: t })}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition ${
+                    form.classType === t
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+                  {CLASS_TYPE_LABELS[t]}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              {form.classType === "GROUP"
+                ? "班课课包需加入班级后随班级排课，不能单独排课。"
+                : "一对一课包按学生单独排课。"}
+            </p>
           </div>
 
           {/* Triangle Calculator */}
