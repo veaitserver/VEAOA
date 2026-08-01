@@ -16,6 +16,8 @@ export const config = {
     "/api/reports/:path*",
     "/api/admin/:path*",
     "/refunds/:path*",
+    "/classes/:path*",
+    "/api/classes/:path*",
     "/api/refunds/:path*",
   ],
 };

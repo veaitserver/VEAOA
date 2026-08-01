@@ -109,6 +109,34 @@ export const CLASS_TYPE_LABELS: Record<string, string> = {
   GROUP: "班课",
 };
 
+// 班级状态：招生中可加成员；进行中已开课；已结班不再排课。
+export const GroupClassStatus = {
+  RECRUITING: "RECRUITING",
+  ONGOING: "ONGOING",
+  FINISHED: "FINISHED",
+} as const;
+export type GroupClassStatus = (typeof GroupClassStatus)[keyof typeof GroupClassStatus];
+
+export const GROUP_CLASS_STATUS_LABELS: Record<string, string> = {
+  RECRUITING: "招生中",
+  ONGOING: "进行中",
+  FINISHED: "已结班",
+};
+
+// 班级课次状态：已排课 → 老师写反馈(待确认) → 教务确认核销。
+export const GroupSessionStatus = {
+  SCHEDULED: "SCHEDULED",
+  LOGGED: "LOGGED",
+  CONFIRMED: "CONFIRMED",
+} as const;
+export type GroupSessionStatus = (typeof GroupSessionStatus)[keyof typeof GroupSessionStatus];
+
+export const GROUP_SESSION_STATUS_LABELS: Record<string, string> = {
+  SCHEDULED: "已排课",
+  LOGGED: "待确认",
+  CONFIRMED: "已核销",
+};
+
 // 账本流水类型。正负号约定：+ 价值进入学生账户，− 价值离开。
 // 余额 = 全部流水之和；正常结清后应为 0。
 export const LedgerType = {

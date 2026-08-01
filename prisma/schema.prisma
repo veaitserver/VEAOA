@@ -37,6 +37,11 @@ model User {
   refundsPaid        RefundRequest[]   @relation("RefundPayer")
   refundsRejected    RefundRequest[]   @relation("RefundRejecter")
   attendanceMarked   ScheduledLesson[] @relation("AttendanceMarker")
+  classesAsTeacher   GroupClass[]      @relation("ClassTeacher")
+  classesCreated     GroupClass[]      @relation("ClassCreator")
+  sessionsAsTeacher  GroupSession[]    @relation("SessionTeacher")
+  sessionsLogged     GroupSession[]    @relation("SessionLogger")
+  sessionsConfirmed  GroupSession[]    @relation("SessionConfirmer")
 }
 
 model UserRole {
@@ -65,6 +70,7 @@ model Campus {
   students   Student[]
   classrooms Classroom[]
   campaigns  Campaign[]
+  groupClasses GroupClass[]
 }
 
 model Grade {
@@ -73,6 +79,7 @@ model Grade {
 
   students Student[]
   packages CoursePackage[]
+  groupClasses GroupClass[]
 }
 
 model Subject {
@@ -81,6 +88,7 @@ model Subject {
 
   packages   CoursePackage[]
   lessonLogs LessonLog[]
+  groupClasses GroupClass[]
 }
 
 model Student {
@@ -113,6 +121,8 @@ model Student {
   lessons   ScheduledLesson[]
   ledgerEntries LedgerEntry[]
   refunds       RefundRequest[]
+  classMemberships GroupClassMember[]
+  groupAttendances GroupSessionAttendance[]
 
   // 同校区 + 同号 + 同名 视为同一学生，防止重复建档；兄弟姐妹(同号不同名)不受限。
   @@unique([campusId, phone, name])
@@ -214,6 +224,7 @@ model CoursePackage {
   deductions CourseDeduction[]
   ledgerEntries LedgerEntry[]
   refunds       RefundRequest[]
+  classMemberships GroupClassMember[]
 }
 
 model Classroom {
@@ -224,6 +235,8 @@ model Classroom {
 
   campus  Campus            @relation(fields: [campusId], references: [id])
   lessons ScheduledLesson[]
+  groupClasses   GroupClass[]
+  groupSessions  GroupSession[]
 }
 
 model ScheduledLesson {
@@ -271,10 +284,13 @@ model LessonLog {
   deductions CourseDeduction[]
 }
 
+// 课时消耗的唯一台账，一对一与班课共用：
+// 一对一挂 logId（老师日志），班课挂 groupSessionId（班级课次），两者恰有其一。
 model CourseDeduction {
   id            String    @id @default(cuid())
   packageId     String
-  logId         String
+  logId         String?
+  groupSessionId String?
   hoursDeducted Float
   createdAt     DateTime  @default(now())
   reversedAt    DateTime?
@@ -284,7 +300,8 @@ model CourseDeduction {
   financeUnlockedById String?
 
   package        CoursePackage @relation(fields: [packageId], references: [id])
-  log            LessonLog     @relation(fields: [logId], references: [id])
+  log            LessonLog?    @relation(fields: [logId], references: [id])
+  groupSession   GroupSession? @relation(fields: [groupSessionId], references: [id])
   reverser       User?         @relation(fields: [reversedById], references: [id])
   financeUnlocker User?        @relation("DeductionUnlocker", fields: [financeUnlockedById], references: [id])
 }
@@ -347,6 +364,103 @@ model RefundRequest {
 
   @@index([studentId])
   @@index([status])
+}
+
+// 班级。班课以班级为单位排课与消课；成员各自用一张班课课包占一个席位。
+// 同一班级必须同科目（业务规则），年级可留空以容纳相近年级混班。
+model GroupClass {
+  id          String   @id @default(cuid())
+  name        String
+  campusId    String
+  subjectId   String
+  gradeId     String?
+  teacherId   String?  // 默认老师，排课时可改
+  classroomId String?  // 默认教室
+  capacity    Int?     // 席位上限，留空为不限
+  // RECRUITING 招生中 / ONGOING 进行中 / FINISHED 已结班
+  status      String   @default("RECRUITING")
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  campus    Campus     @relation(fields: [campusId], references: [id])
+  subject   Subject    @relation(fields: [subjectId], references: [id])
+  grade     Grade?     @relation(fields: [gradeId], references: [id])
+  teacher   User?      @relation("ClassTeacher", fields: [teacherId], references: [id])
+  classroom Classroom? @relation(fields: [classroomId], references: [id])
+  creator   User       @relation("ClassCreator", fields: [createdById], references: [id])
+
+  members  GroupClassMember[]
+  sessions GroupSession[]
+
+  @@index([campusId, status])
+}
+
+// 班级成员 = 学生 + 其班课课包。中途插班/退班用 joinedAt/leftAt 记录，
+// 排课时只算当时在册的成员，避免把没上过的课算到头上。
+model GroupClassMember {
+  id        String    @id @default(cuid())
+  classId   String
+  studentId String
+  packageId String
+  joinedAt  DateTime  @default(now())
+  leftAt    DateTime?
+
+  class   GroupClass    @relation(fields: [classId], references: [id])
+  student Student       @relation(fields: [studentId], references: [id])
+  package CoursePackage @relation(fields: [packageId], references: [id])
+
+  // 一张课包在一个班里只占一个席位
+  @@unique([classId, packageId])
+  @@index([classId])
+  @@index([studentId])
+}
+
+// 班级的一次课。排到课表上的就是它；老师整班写一条反馈，教务确认后全员各自扣课时。
+model GroupSession {
+  id          String   @id @default(cuid())
+  classId     String
+  teacherId   String
+  classroomId String
+  startTime   DateTime
+  endTime     DateTime
+  // SCHEDULED 已排课 / LOGGED 待确认 / CONFIRMED 已核销
+  status      String   @default("SCHEDULED")
+  // 老师反馈：整班一条
+  notes         String?
+  loggedById    String?
+  loggedAt      DateTime?
+  confirmedById String?
+  confirmedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  class     GroupClass @relation(fields: [classId], references: [id])
+  teacher   User       @relation("SessionTeacher", fields: [teacherId], references: [id])
+  classroom Classroom  @relation(fields: [classroomId], references: [id])
+  logger    User?      @relation("SessionLogger", fields: [loggedById], references: [id])
+  confirmer User?      @relation("SessionConfirmer", fields: [confirmedById], references: [id])
+
+  attendances GroupSessionAttendance[]
+  deductions  CourseDeduction[]
+
+  @@index([classId, startTime])
+  @@index([startTime])
+}
+
+// 每次课 × 每个在册成员一条考勤。请假默认仍扣（座位已占），可手动撤销那一笔。
+model GroupSessionAttendance {
+  id         String  @id @default(cuid())
+  sessionId  String
+  studentId  String
+  packageId  String
+  attendance String  @default("PRESENT")
+  note       String?
+
+  session GroupSession @relation(fields: [sessionId], references: [id])
+  student Student      @relation(fields: [studentId], references: [id])
+
+  @@unique([sessionId, studentId])
+  @@index([sessionId])
 }
 
 model Notification {

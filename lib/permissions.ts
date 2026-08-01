@@ -197,6 +197,20 @@ export function canPayRefund(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+// ── 班课 ────────────────────────────────────────────────────────────────────
+/** 建班、改班、加/移成员、给班级排课：教务与管理层。 */
+export function canManageGroupClass(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 查看班级：管理层/教务/学管/销售都要看得到自己学生在哪个班；老师看自己带的班。 */
+export function canViewGroupClass(user: SessionUser | null | undefined): boolean {
+  return hasRole(
+    user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN,
+    Role.STUDENT_MANAGER, Role.SALES, Role.TEACHER, Role.FINANCE,
+  );
+}
+
 export function canSubmitLog(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.TEACHER, Role.SUPER_ADMIN);
 }
