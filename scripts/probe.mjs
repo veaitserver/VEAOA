@@ -1147,6 +1147,123 @@ async function run() {
   await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: rsPkg.id } } });
   await prisma.scheduledLesson.deleteMany({ where: { packageId: rsPkg.id } });
   await prisma.coursePackage.delete({ where: { id: rsPkg.id } });
+
+  // ── 阶段 13：班课（同科目、全员库存、全员扣课、单人撤销）──────────────────
+  console.log("\n阶段 13 — 班课");
+  const gcPhones = ["6479998801", "6479998802"];
+  const cleanupGroup = async () => {
+    const classes = await prisma.groupClass.findMany({ where: { name: { startsWith: "探测班·" } } });
+    for (const c of classes) {
+      const ss = await prisma.groupSession.findMany({ where: { classId: c.id } });
+      for (const s of ss) {
+        await prisma.courseDeduction.deleteMany({ where: { groupSessionId: s.id } });
+        await prisma.groupSessionAttendance.deleteMany({ where: { sessionId: s.id } });
+      }
+      await prisma.groupSession.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClassMember.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClass.delete({ where: { id: c.id } });
+    }
+    for (const ph of gcPhones) {
+      const s = await prisma.student.findFirst({ where: { phone: ph } });
+      if (!s) continue;
+      await prisma.ledgerEntry.deleteMany({ where: { studentId: s.id } });
+      await prisma.coursePackage.deleteMany({ where: { studentId: s.id } });
+      await prisma.student.delete({ where: { id: s.id } });
+    }
+  };
+  await cleanupGroup();
+
+  const mkmSubject = await prisma.subject.findFirst({ where: { name: "Math" } });
+  const altSubject = await prisma.subject.findFirst({ where: { name: "Physics" } });
+  const gcRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-markham" } });
+  const mkGroupStudent = async (name, phone, subjectId, classType, remaining) => {
+    const s = await prisma.student.create({
+      data: { name, phone, campusId: "campus-markham", gradeId: fx.grade.id },
+    });
+    const p = await prisma.coursePackage.create({
+      data: {
+        studentId: s.id, gradeId: fx.grade.id, subjectId,
+        totalHours: 20, pricePerHour: 60, totalAmount: 1200, remainingHours: remaining,
+        status: "ACTIVE", classType, createdById: fx.admin.id,
+      },
+    });
+    return { s, p };
+  };
+  const gA = await mkGroupStudent("探测·甲", gcPhones[0], mkmSubject.id, "GROUP", 20);
+  const gB = await mkGroupStudent("探测·乙", gcPhones[1], altSubject.id, "GROUP", 1);
+
+  // 销售不得建班
+  const salesClass = await mkmSales.req("POST", "/api/classes", {
+    name: "探测班·越权", campusId: "campus-markham", subjectId: mkmSubject.id,
+  });
+  check(13, "销售不得创建班级", blocked(salesClass), `实际 ${salesClass.status}`);
+
+  const gcCreate = await acadMkm.req("POST", "/api/classes", {
+    name: "探测班·数学", campusId: "campus-markham", subjectId: mkmSubject.id,
+    gradeId: fx.grade.id, teacherId: mkmTeacherRow.id, classroomId: gcRoom.id, capacity: 5,
+  });
+  check(13, "教务可创建班级", gcCreate.status === 201, `实际 ${gcCreate.status}`);
+  const gcId = gcCreate.body.id;
+
+  const addOk = await acadMkm.req("POST", `/api/classes/${gcId}/members`, { packageId: gA.p.id });
+  check(13, "同科目班课课包可入班", addOk.status === 201, `实际 ${addOk.status} ${addOk.body?.error ?? ""}`);
+
+  // 科目不符被拒（业务硬规则）
+  const addWrongSubject = await acadMkm.req("POST", `/api/classes/${gcId}/members`, { packageId: gB.p.id });
+  check(13, "科目不符的课包不得入班", addWrongSubject.status === 400, `实际 ${addWrongSubject.status}`);
+
+  // 改成同科目但只有 1h → 用于全员库存校验
+  await prisma.coursePackage.update({ where: { id: gB.p.id }, data: { subjectId: mkmSubject.id } });
+  await acadMkm.req("POST", `/api/classes/${gcId}/members`, { packageId: gB.p.id });
+
+  const gcStart = new Date(fx.base.getTime() + 200 * 86400000);
+  const gcTimes = (offsetDays, hrs) => {
+    const st = new Date(gcStart.getTime() + offsetDays * 86400000);
+    return { startTime: st.toISOString(), endTime: new Date(st.getTime() + hrs * 3600000).toISOString() };
+  };
+
+  const shortHours = await acadMkm.req("POST", `/api/classes/${gcId}/sessions`, gcTimes(0, 2));
+  check(13, "有成员课时不足则整节课排不了", shortHours.status === 400, `实际 ${shortHours.status}`);
+
+  await prisma.coursePackage.update({ where: { id: gB.p.id }, data: { remainingHours: 20 } });
+  const gcSession = await acadMkm.req("POST", `/api/classes/${gcId}/sessions`, gcTimes(0, 2));
+  check(13, "全员课时充足可排课并生成全员名单",
+    gcSession.status === 201 && gcSession.body?.attendances?.length === 2,
+    `HTTP ${gcSession.status}，名单 ${gcSession.body?.attendances?.length}`);
+  const gsId = gcSession.body.id;
+
+  const gcClash = await acadMkm.req("POST", `/api/classes/${gcId}/sessions`, gcTimes(0, 2));
+  check(13, "同时段重复排课应冲突", gcClash.status === 409, `实际 ${gcClash.status}`);
+
+  const noLog = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/confirm`);
+  check(13, "老师未写反馈不得核销", noLog.status === 400, `实际 ${noLog.status}`);
+
+  const gcLog = await mkmTeacher.req("POST", `/api/classes/${gcId}/sessions/${gsId}/log`, { notes: "探测：整班一条反馈" });
+  check(13, "老师可提交整班反馈", gcLog.status === 200, `实际 ${gcLog.status} ${gcLog.body?.error ?? ""}`);
+
+  // 乙请假 → 班课请假默认仍扣
+  await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/attendance`, { studentId: gB.s.id, attendance: "LEAVE" });
+  const gcConfirm = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/confirm`);
+  const gAAfter = await prisma.coursePackage.findUnique({ where: { id: gA.p.id } });
+  const gBAfter = await prisma.coursePackage.findUnique({ where: { id: gB.p.id } });
+  check(13, "核销后全班各扣一次（请假照扣）",
+    gcConfirm.status === 200 && Number(gAAfter.remainingHours) === 18 && Number(gBAfter.remainingHours) === 18,
+    `甲 ${gAAfter.remainingHours}h / 乙 ${gBAfter.remainingHours}h（应各 18）`);
+
+  const lateAtt = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/attendance`, { studentId: gB.s.id, attendance: "PRESENT" });
+  check(13, "已核销的课次不得改考勤", lateAtt.status === 400, `实际 ${lateAtt.status}`);
+
+  const acadReverse = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/reverse`, {});
+  check(13, "教务不得撤销班课扣课", blocked(acadReverse), `实际 ${acadReverse.status}`);
+
+  const oneReverse = await finance.req("POST", `/api/classes/${gcId}/sessions/${gsId}/reverse`, { packageId: gB.p.id });
+  const gBBack = await prisma.coursePackage.findUnique({ where: { id: gB.p.id } });
+  const gAKept = await prisma.coursePackage.findUnique({ where: { id: gA.p.id } });
+  check(13, "可单独撤销某成员扣课（请假免扣）",
+    oneReverse.status === 200 && Number(gBBack.remainingHours) === 20 && Number(gAKept.remainingHours) === 18,
+    `乙 ${gBBack.remainingHours}h（应 20）/ 甲 ${gAKept.remainingHours}h（应 18）`);
+
+  await cleanupGroup();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -1162,7 +1279,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;
