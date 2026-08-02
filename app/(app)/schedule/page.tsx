@@ -46,6 +46,11 @@ type Lesson = {
     isConfirmed: boolean;
     attendance?: string | null;
     attendanceNote?: string | null;
+    // 班课课次：与一对一同表展示，但改期/考勤在班级页操作。
+    isGroup?: boolean;
+    classId?: string;
+    className?: string;
+    memberCount?: number;
   };
 };
 
@@ -102,12 +107,15 @@ function durationHoursFromHHMM(start: string, end: string): number {
 function lessonColor(ep: Lesson["extendedProps"]) {
   if (ep.isConfirmed) return "bg-green-100 border-green-400 text-green-900";
   if (ep.hasLog)      return "bg-amber-100 border-amber-400 text-amber-900";
+  // 班课用紫色与一对一区分。
+  if (ep.isGroup)     return "bg-violet-100 border-violet-400 text-violet-900";
   return "bg-blue-100 border-blue-400 text-blue-900";
 }
 
 function lessonDot(ep: Lesson["extendedProps"]) {
   if (ep.isConfirmed) return "bg-green-500";
   if (ep.hasLog)      return "bg-amber-400";
+  if (ep.isGroup)     return "bg-violet-500";
   return "bg-blue-500";
 }
 
@@ -715,12 +723,12 @@ export default function SchedulePage() {
             </div>
             <div className="space-y-3 text-sm">
               {[
-                ["学生", detail.extendedProps.studentName],
+                [detail.extendedProps.isGroup ? "班级" : "学生", detail.extendedProps.studentName],
                 ["老师", detail.extendedProps.teacherName],
                 ["科目", detail.extendedProps.subjectName],
                 ["教室", detail.extendedProps.classroomName],
                 ["时间", `${fmtTime(new Date(detail.start))} – ${fmtTime(new Date(detail.end))}`],
-                ["类型", detail.extendedProps.lessonType === "ONE_ON_ONE" ? "1 对 1" : "班课"],
+                ["类型", detail.extendedProps.isGroup ? `班课（${detail.extendedProps.memberCount ?? 0} 人）` : "1 对 1"],
                 ["状态", detail.extendedProps.isConfirmed ? "✅ 已核销" : detail.extendedProps.hasLog ? "⏳ 待确认" : "📅 已排课"],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between items-center py-1 border-b border-slate-50 last:border-0">
@@ -730,8 +738,19 @@ export default function SchedulePage() {
               ))}
             </div>
 
+            {/* 班课的考勤/改期/核销都按班级整体处理，统一到班级页操作。 */}
+            {detail.extendedProps.isGroup && (
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <a href={`/classes/${detail.extendedProps.classId}`}
+                  className="block w-full text-center bg-violet-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-violet-700">
+                  前往班级管理该课次
+                </a>
+                <p className="text-xs text-slate-400 mt-2">班课的考勤、改期与全员核销在班级页操作。</p>
+              </div>
+            )}
+
             {/* 考勤：学生临时请假时在课表上直接标，标完再决定改期还是删除。 */}
-            {canEditLesson && !detail.extendedProps.isConfirmed && (
+            {!detail.extendedProps.isGroup && canEditLesson && !detail.extendedProps.isConfirmed && (
               <div className="mt-4 pt-3 border-t border-slate-100">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-slate-400">考勤</span>
@@ -758,8 +777,8 @@ export default function SchedulePage() {
               </div>
             )}
 
-            {/* 改期 / 删除：像日历软件那样在课表上直接改。 */}
-            {canEditLesson && (
+            {/* 改期 / 删除：像日历软件那样在课表上直接改（班课走班级页）。 */}
+            {!detail.extendedProps.isGroup && canEditLesson && (
               <div className="mt-4 pt-3 border-t border-slate-100">
                 {detail.extendedProps.isConfirmed ? (
                   <p className="text-xs text-slate-400">已核销的课程不能改期或删除，需财务先撤销核销。</p>

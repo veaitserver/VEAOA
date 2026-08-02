@@ -82,7 +82,56 @@ export async function GET(req: Request) {
     borderColor: "transparent",
   }));
 
-  return NextResponse.json(events);
+  // 班课课次也要出现在同一张课表上 —— 老师的时间是被两类课共同占用的，
+  // 只显示一对一会让课表看起来有空档，实际排不进去。
+  const sessionWhere: Record<string, unknown> = {};
+  if (start) sessionWhere.startTime = { gte: new Date(start) };
+  if (end) sessionWhere.endTime = { lte: new Date(end) };
+  if (teacherId) sessionWhere.teacherId = teacherId;
+  if (classroomId) sessionWhere.classroomId = classroomId;
+  if (scope) sessionWhere.class = { campusId: scope };
+
+  const sessions = await prisma.groupSession.findMany({
+    where: sessionWhere,
+    include: {
+      teacher: { select: { id: true, name: true } },
+      classroom: { select: { id: true, name: true } },
+      class: { include: { subject: { select: { name: true } } } },
+      attendances: { select: { id: true } },
+    },
+    orderBy: { startTime: "asc" },
+  });
+
+  const sessionEvents = sessions.map((s) => ({
+    id: s.id,
+    title: `${s.class.name} - ${s.class.subject.name} (${s.teacher.name})`,
+    start: s.startTime,
+    end: s.endTime,
+    extendedProps: {
+      teacherId: s.teacherId,
+      teacherName: s.teacher.name,
+      // 班课没有单一学生，用班级名占位，前端据 isGroup 区分展示。
+      studentId: "",
+      studentName: s.class.name,
+      classroomId: s.classroomId,
+      classroomName: s.classroom.name,
+      packageId: "",
+      subjectName: s.class.subject.name,
+      lessonType: "GROUP",
+      isGroup: true,
+      classId: s.classId,
+      className: s.class.name,
+      memberCount: s.attendances.length,
+      hasLog: s.status !== "SCHEDULED",
+      isConfirmed: s.status === "CONFIRMED",
+      attendance: null,
+      attendanceNote: null,
+    },
+    backgroundColor: s.status === "CONFIRMED" ? "#16a34a" : s.status === "LOGGED" ? "#d97706" : "#7c3aed",
+    borderColor: "transparent",
+  }));
+
+  return NextResponse.json([...events, ...sessionEvents]);
 }
 
 export async function POST(req: Request) {
