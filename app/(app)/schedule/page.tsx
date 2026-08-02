@@ -54,6 +54,13 @@ type Lesson = {
   };
 };
 
+type GroupClassLite = {
+  id: string; name: string; status: string;
+  subject: { name: string };
+  grade: { name: string } | null;
+  members: { id: string }[];
+};
+
 type Student   = { id: string; name: string };
 type Package   = { id: string; grade: { name: string }; subject: { name: string }; remainingHours: string };
 type Classroom = { id: string; name: string; campus: { name: string } };
@@ -302,14 +309,27 @@ function CreateModal({
   onStartChange: (v: string) => void;
   onEndChange:   (v: string) => void;
   onClose: () => void;
-  onSave:  (data: { studentId: string; packageId: string; classroomId: string; lessonType: string }) => void;
+  onSave:  (data: { studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string }) => void;
   error: string;
 }) {
   const [studentSearch,   setStudentSearch]   = useState("");
   const [studentResults,  setStudentResults]  = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [studentPackages, setStudentPackages] = useState<Package[]>([]);
-  const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE" });
+  const [classes, setClasses] = useState<GroupClassLite[]>([]);
+  const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE", classId: "" });
+
+  const isGroup = form.lessonType === "GROUP";
+
+  // 选了班课才去拉班级列表；未结班的才能排课。
+  useEffect(() => {
+    if (!isGroup || classes.length) return;
+    fetch("/api/classes")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: GroupClassLite[]) => setClasses(rows.filter((c) => c.status !== "FINISHED")));
+  }, [isGroup, classes.length]);
+
+  const selectedClass = classes.find((c) => c.id === form.classId);
 
   async function search(q: string) {
     setStudentSearch(q);
@@ -342,6 +362,22 @@ function CreateModal({
           {teachers.find(t => t.id === teacherId)?.name} · {date}
         </p>
         <div className="space-y-3">
+          {/* 课程类型放最前：它决定下面选「学生+课包」还是「班级」。 */}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">课程类型 *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([["ONE_ON_ONE", "1 对 1"], ["GROUP", "班课"]] as const).map(([v, label]) => (
+                <button key={v} type="button"
+                  onClick={() => setForm(f => ({ ...f, lessonType: v, studentId: "", packageId: "", classId: "" }))}
+                  className={`py-2.5 rounded-lg text-sm font-medium border transition ${
+                    form.lessonType === v
+                      ? (v === "GROUP" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-blue-500 bg-blue-50 text-blue-700")
+                      : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">开始时间 *</label>
@@ -354,6 +390,36 @@ function CreateModal({
                 className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
+
+          {/* 班课：选班级，不选学生课包 —— 班课以班级为单位排课，全班成员各自扣自己的课包。 */}
+          {isGroup && (
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">班级 *</label>
+              <select value={form.classId} onChange={e => setForm(f => ({ ...f, classId: e.target.value }))}
+                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">选择班级</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id} disabled={c.members.length === 0}>
+                    {c.name} — {c.subject.name}{c.grade ? ` · ${c.grade.name}` : ""}（{c.members.length} 人）
+                    {c.members.length === 0 ? " · 无成员" : ""}
+                  </option>
+                ))}
+              </select>
+              {classes.length === 0 && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  还没有可排课的班级，请先到「班级管理」建班并加入成员。
+                </p>
+              )}
+              {selectedClass && (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  全班 {selectedClass.members.length} 人，核销时每人各扣一次课时；
+                  任何一位成员课时不足都会拦下整节课。
+                </p>
+              )}
+            </div>
+          )}
+
+          {!isGroup && (
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">学生 * (在读)</label>
             <div className="relative">
@@ -370,7 +436,8 @@ function CreateModal({
               )}
             </div>
           </div>
-          {selectedStudent && (
+          )}
+          {!isGroup && selectedStudent && (
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">课包 *</label>
               <select value={form.packageId} onChange={e => setForm(f => ({ ...f, packageId: e.target.value }))}
@@ -410,18 +477,11 @@ function CreateModal({
               {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}（{c.campus.name}）</option>)}
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">课程类型</label>
-            <select value={form.lessonType} onChange={e => setForm(f => ({ ...f, lessonType: e.target.value }))}
-              className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="ONE_ON_ONE">1 对 1</option>
-              <option value="GROUP">班课</option>
-            </select>
-          </div>
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <button onClick={() => onSave(form)}
-            className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors mt-1">
-            保存排课
+            className={`w-full py-3 text-white rounded-xl text-sm font-semibold transition-colors mt-1 ${
+              isGroup ? "bg-violet-600 hover:bg-violet-700 active:bg-violet-800" : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"}`}>
+            {isGroup ? "保存班课排课" : "保存排课"}
           </button>
         </div>
       </div>
@@ -557,20 +617,36 @@ export default function SchedulePage() {
     setShowModal(true);
   }
 
-  async function handleSave(formData: { studentId: string; packageId: string; classroomId: string; lessonType: string }) {
-    if (!modalTeacherId || !formData.studentId || !formData.packageId || !formData.classroomId) {
-      setModalError("请填写所有必填字段"); return;
+  async function handleSave(formData: { studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string }) {
+    const isGroup = formData.lessonType === "GROUP";
+    if (!modalTeacherId || !formData.classroomId) { setModalError("请填写所有必填字段"); return; }
+    if (isGroup ? !formData.classId : (!formData.studentId || !formData.packageId)) {
+      setModalError(isGroup ? "请选择班级" : "请选择学生与课包"); return;
     }
     // 录入的日期/时间是「多伦多墙钟」，按多伦多时区转成 UTC，避免按录入者浏览器时区存错。
     const startTime = torontoWallTimeToUtc(modalDate, modalStart);
     const endTime   = torontoWallTimeToUtc(modalDate, modalEnd);
     if (endTime <= startTime) { setModalError("结束时间须晚于开始时间"); return; }
     setModalError("");
-    const res = await fetch("/api/schedule", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teacherId: modalTeacherId, ...formData, startTime: startTime.toISOString(), endTime: endTime.toISOString() }),
-    });
+
+    // 班课走班级课次接口（全班成员各自扣自己的课包），一对一走单人排课接口。
+    const res = isGroup
+      ? await fetch(`/api/classes/${formData.classId}/sessions`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teacherId: modalTeacherId, classroomId: formData.classroomId,
+            startTime: startTime.toISOString(), endTime: endTime.toISOString(),
+          }),
+        })
+      : await fetch("/api/schedule", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            teacherId: modalTeacherId, studentId: formData.studentId, packageId: formData.packageId,
+            classroomId: formData.classroomId, lessonType: formData.lessonType,
+            startTime: startTime.toISOString(), endTime: endTime.toISOString(),
+          }),
+        });
+
     if (res.ok) { setShowModal(false); loadLessons(); }
     else { const d = await res.json(); setModalError(d.error); }
   }
