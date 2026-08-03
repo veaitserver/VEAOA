@@ -84,7 +84,10 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
     untilType: "weeks" | "date" | "count";
     weeks: string; untilDate: string; count: string;
   }>({ frequency: "WEEKLY", weekdays: [], untilType: "weeks", weeks: "8", untilDate: "", count: "8" });
-  const [batchResult, setBatchResult] = useState<{ created: number; requested: number; skipped: { date: string; reason: string }[] } | null>(null);
+  const [batchResult, setBatchResult] = useState<{
+    created: number; requested: number; skipped: { date: string; reason: string }[];
+    dryRun?: boolean; committed?: boolean;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/classes/${id}`);
@@ -155,27 +158,51 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
     else setError((await res.json()).error ?? "排课失败");
   }
 
-  async function createBatch() {
-    setError(""); setBatchResult(null);
-    if (!schedForm.date) { setError("请选择开始日期"); return; }
+  function batchPayload(dryRun: boolean) {
     const until =
       repeat.untilType === "weeks" ? { type: "weeks", value: Number(repeat.weeks) }
       : repeat.untilType === "count" ? { type: "count", value: Number(repeat.count) }
       : { type: "date", value: repeat.untilDate };
+    return {
+      startDate: schedForm.date, start: schedForm.start, end: schedForm.end,
+      frequency: repeat.frequency,
+      weekdays: repeat.frequency === "WEEKLY" ? repeat.weekdays : undefined,
+      until, dryRun,
+    };
+  }
+
+  /**
+   * 先预检再落库：全部可排就直接建；只要有一次排不了，就弹警告、保留排课窗口，
+   * 让教务改完再提交，不闷头建一半。
+   */
+  async function previewBatch() {
+    setError(""); setBatchResult(null);
+    if (!schedForm.date) { setError("请选择开始日期"); return; }
     if (repeat.untilType === "date" && !repeat.untilDate) { setError("请选择结束日期"); return; }
 
     const res = await fetch(`/api/classes/${id}/sessions/batch`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        startDate: schedForm.date, start: schedForm.start, end: schedForm.end,
-        frequency: repeat.frequency,
-        weekdays: repeat.frequency === "WEEKLY" ? repeat.weekdays : undefined,
-        until,
-      }),
+      body: JSON.stringify(batchPayload(true)),
+    });
+    const body = await res.json();
+    if (!res.ok) { setError(body.error ?? "预检失败"); return; }
+
+    if (!body.skipped?.length) {
+      await commitBatch();          // 全部可排，直接建，不多问一步
+    } else {
+      setBatchResult(body);         // 有排不了的：只警告，不建
+    }
+  }
+
+  async function commitBatch() {
+    setError("");
+    const res = await fetch(`/api/classes/${id}/sessions/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batchPayload(false)),
     });
     const body = await res.json();
     if (res.ok) {
-      setBatchResult(body);
+      setBatchResult({ ...body, committed: true });
       if (!body.skipped?.length) setShowSchedule(false);
       load();
     } else setError(body.error ?? "批量排课失败");
@@ -466,25 +493,51 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
                         </div>
                       )}
 
-                      <button onClick={createBatch}
+                      <button onClick={previewBatch}
                         className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
                         批量排课
                       </button>
                       <p className="text-xs text-slate-400">
-                        逐次校验，能排的先排；撞课或课时不足的会跳过并列出原因。单次最多 60 节。
+                        先预检：全部可排就直接生成；有排不了的会先提示，你可以改完再提交。单次最多 60 节。
                       </p>
                     </div>
                   )}
 
-                  {batchResult && (
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
-                      <p className="text-slate-700">
-                        计划 {batchResult.requested} 次，成功排了 <b className="text-green-700">{batchResult.created}</b> 次
-                        {batchResult.skipped.length > 0 && <>，跳过 <b className="text-amber-700">{batchResult.skipped.length}</b> 次</>}
+                  {/* 预检发现问题：警告 + 保留窗口，让教务改条件；也可选择只排可行的那几次 */}
+                  {batchResult && batchResult.dryRun && batchResult.skipped.length > 0 && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+                      <p className="text-sm text-amber-900 font-medium">
+                        ⚠️ 计划 {batchResult.requested} 次，其中 {batchResult.skipped.length} 次排不了
+                        （可排 {batchResult.created} 次）
                       </p>
-                      {batchResult.skipped.map((s) => (
-                        <p key={s.date} className="text-xs text-amber-700">· {s.date}：{s.reason}</p>
-                      ))}
+                      <div className="max-h-32 overflow-y-auto space-y-0.5">
+                        {batchResult.skipped.map((s) => (
+                          <p key={s.date} className="text-xs text-amber-800">· {s.date}：{s.reason}</p>
+                        ))}
+                      </div>
+                      <p className="text-xs text-amber-700">
+                        可以改上面的日期/时间/频率后重新预检，或只把能排的那 {batchResult.created} 次先排上。
+                      </p>
+                      <div className="flex gap-2">
+                        <button onClick={commitBatch} disabled={batchResult.created === 0}
+                          className="bg-amber-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50">
+                          只排可行的 {batchResult.created} 次
+                        </button>
+                        <button onClick={() => setBatchResult(null)}
+                          className="border border-slate-300 text-slate-600 px-4 py-1.5 rounded-lg text-sm hover:bg-white">
+                          我去改条件
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 已实际生成 */}
+                  {batchResult && batchResult.committed && (
+                    <div className="rounded-lg border border-green-300 bg-green-50 p-3 text-sm">
+                      <p className="text-green-800">
+                        已生成 <b>{batchResult.created}</b> 次课
+                        {batchResult.skipped.length > 0 && <>，跳过 {batchResult.skipped.length} 次</>}
+                      </p>
                     </div>
                   )}
                 </>

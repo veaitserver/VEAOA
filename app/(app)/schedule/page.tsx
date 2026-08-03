@@ -62,6 +62,16 @@ type GroupClassLite = {
   members: { id: string }[];
 };
 
+/** 排课表单提交内容；带 repeat 时走批量接口。 */
+type SaveData = {
+  studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string;
+  repeat?: {
+    frequency: "DAILY" | "WEEKDAYS" | "WEEKLY";
+    weekdays: number[];
+    until: { type: "weeks" | "count"; value: number } | { type: "date"; value: string };
+  };
+};
+
 type Student   = { id: string; name: string };
 type Package   = { id: string; grade: { name: string }; subject: { name: string }; remainingHours: string };
 type Classroom = { id: string; name: string; campus: { name: string } };
@@ -310,7 +320,7 @@ function CreateModal({
   onStartChange: (v: string) => void;
   onEndChange:   (v: string) => void;
   onClose: () => void;
-  onSave:  (data: { studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string }) => void;
+  onSave:  (data: SaveData) => void;
   error: string;
 }) {
   const [studentSearch,   setStudentSearch]   = useState("");
@@ -321,8 +331,23 @@ function CreateModal({
   const [classSearch, setClassSearch] = useState("");
   const [selectedClass, setSelectedClass] = useState<GroupClassLite | null>(null);
   const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE", classId: "" });
+  // 重复排课（一对一与班课通用）
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [rep, setRep] = useState<{
+    frequency: "DAILY" | "WEEKDAYS" | "WEEKLY"; weekdays: number[];
+    untilType: "weeks" | "count" | "date"; weeks: string; count: string; untilDate: string;
+  }>({ frequency: "WEEKLY", weekdays: [], untilType: "weeks", weeks: "8", count: "8", untilDate: "" });
 
   const isGroup = form.lessonType === "GROUP";
+
+  function buildRepeat(): SaveData["repeat"] | undefined {
+    if (!repeatOn) return undefined;
+    const until =
+      rep.untilType === "weeks" ? { type: "weeks" as const, value: Number(rep.weeks) }
+      : rep.untilType === "count" ? { type: "count" as const, value: Number(rep.count) }
+      : { type: "date" as const, value: rep.untilDate };
+    return { frequency: rep.frequency, weekdays: rep.weekdays, until };
+  }
 
   /**
    * 班级搜索：班级一多，下拉就找不着了，所以做成搜索 + 候选列表。
@@ -524,11 +549,88 @@ function CreateModal({
               {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}（{c.campus.name}）</option>)}
             </select>
           </div>
-          {error && <p className="text-red-600 text-sm">{error}</p>}
-          <button onClick={() => onSave(form)}
+          {/* 重复排课：长期固定时段的学生/班级常用 */}
+          <div className="border-t border-slate-100 pt-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={repeatOn} onChange={e => setRepeatOn(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300" />
+              <span className="text-sm font-medium text-slate-700">重复排课</span>
+              <span className="text-xs text-slate-400">如每周固定时段</span>
+            </label>
+
+            {repeatOn && (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">频率</label>
+                    <select value={rep.frequency}
+                      onChange={e => setRep({ ...rep, frequency: e.target.value as typeof rep.frequency })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                      <option value="WEEKLY">每周固定几天</option>
+                      <option value="WEEKDAYS">每个工作日</option>
+                      <option value="DAILY">每天</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">持续到</label>
+                    <div className="flex gap-2">
+                      <select value={rep.untilType}
+                        onChange={e => setRep({ ...rep, untilType: e.target.value as typeof rep.untilType })}
+                        className="flex-1 min-w-0 px-2 py-2 border border-slate-300 rounded-lg text-sm">
+                        <option value="weeks">连续几周</option>
+                        <option value="count">共几次</option>
+                        <option value="date">到某日</option>
+                      </select>
+                      {rep.untilType === "weeks" && (
+                        <input type="number" min="1" max="52" value={rep.weeks}
+                          onChange={e => setRep({ ...rep, weeks: e.target.value })}
+                          className="w-16 px-2 py-2 border border-slate-300 rounded-lg text-sm" />
+                      )}
+                      {rep.untilType === "count" && (
+                        <input type="number" min="1" max="60" value={rep.count}
+                          onChange={e => setRep({ ...rep, count: e.target.value })}
+                          className="w-16 px-2 py-2 border border-slate-300 rounded-lg text-sm" />
+                      )}
+                      {rep.untilType === "date" && (
+                        <input type="date" value={rep.untilDate}
+                          onChange={e => setRep({ ...rep, untilDate: e.target.value })}
+                          className="flex-1 min-w-0 px-2 py-2 border border-slate-300 rounded-lg text-sm" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {rep.frequency === "WEEKLY" && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">每周哪几天（不选则用所点日期那天）</label>
+                    <div className="flex gap-1 flex-wrap">
+                      {["日", "一", "二", "三", "四", "五", "六"].map((label, dow) => {
+                        const on = rep.weekdays.includes(dow);
+                        return (
+                          <button key={dow} type="button"
+                            onClick={() => setRep({
+                              ...rep,
+                              weekdays: on ? rep.weekdays.filter(x => x !== dow) : [...rep.weekdays, dow],
+                            })}
+                            className={`w-9 py-1.5 rounded-lg text-sm border transition ${on ? "border-blue-500 bg-blue-50 text-blue-700 font-medium" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400">
+                  先预检：全部可排就直接生成；有排不了的会先提示，可改完再提交。
+                </p>
+              </div>
+            )}
+          </div>
+
+          {error && <p className="text-red-600 text-sm whitespace-pre-line">{error}</p>}
+          <button onClick={() => onSave({ ...form, repeat: buildRepeat() })}
             className={`w-full py-3 text-white rounded-xl text-sm font-semibold transition-colors mt-1 ${
               isGroup ? "bg-violet-600 hover:bg-violet-700 active:bg-violet-800" : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"}`}>
-            {isGroup ? "保存班课排课" : "保存排课"}
+            {repeatOn ? (isGroup ? "批量排班课" : "批量排课") : (isGroup ? "保存班课排课" : "保存排课")}
           </button>
         </div>
       </div>
@@ -664,7 +766,7 @@ export default function SchedulePage() {
     setShowModal(true);
   }
 
-  async function handleSave(formData: { studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string }) {
+  async function handleSave(formData: SaveData) {
     const isGroup = formData.lessonType === "GROUP";
     if (!modalTeacherId || !formData.classroomId) { setModalError("请填写所有必填字段"); return; }
     if (isGroup ? !formData.classId : (!formData.studentId || !formData.packageId)) {
@@ -675,6 +777,48 @@ export default function SchedulePage() {
     const endTime   = torontoWallTimeToUtc(modalDate, modalEnd);
     if (endTime <= startTime) { setModalError("结束时间须晚于开始时间"); return; }
     setModalError("");
+
+    // 重复排课：先预检，全部可排才直接生成；有排不了的只提示、保留窗口让人改。
+    if (formData.repeat) {
+      const url = isGroup ? `/api/classes/${formData.classId}/sessions/batch` : "/api/schedule/batch";
+      const base = {
+        startDate: modalDate, start: modalStart, end: modalEnd,
+        frequency: formData.repeat.frequency,
+        weekdays: formData.repeat.frequency === "WEEKLY" ? formData.repeat.weekdays : undefined,
+        until: formData.repeat.until,
+        ...(isGroup
+          ? { teacherId: modalTeacherId, classroomId: formData.classroomId }
+          : {
+              teacherId: modalTeacherId, studentId: formData.studentId,
+              packageId: formData.packageId, classroomId: formData.classroomId,
+              lessonType: formData.lessonType,
+            }),
+      };
+      const post = (dryRun: boolean) =>
+        fetch(url, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...base, dryRun }),
+        });
+
+      const pre = await post(true);
+      const preBody = await pre.json();
+      if (!pre.ok) { setModalError(preBody.error ?? "预检失败"); return; }
+
+      if (preBody.skipped?.length) {
+        const lines = preBody.skipped.slice(0, 5)
+          .map((s: { date: string; reason: string }) => `· ${s.date}：${s.reason}`).join("\n");
+        const more = preBody.skipped.length > 5 ? `\n…还有 ${preBody.skipped.length - 5} 次` : "";
+        setModalError(
+          `⚠️ 计划 ${preBody.requested} 次，其中 ${preBody.skipped.length} 次排不了（可排 ${preBody.created} 次）：\n${lines}${more}\n\n请调整日期/时间/频率后重试。`,
+        );
+        return; // 保留窗口，不创建
+      }
+
+      const res = await post(false);
+      if (res.ok) { setShowModal(false); loadLessons(); }
+      else setModalError((await res.json()).error ?? "批量排课失败");
+      return;
+    }
 
     // 班课走班级课次接口（全班成员各自扣自己的课包），一对一走单人排课接口。
     const res = isGroup

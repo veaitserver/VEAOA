@@ -23,6 +23,8 @@ const schema = z.object({
   ]),
   teacherId: z.string().min(1).optional(),
   classroomId: z.string().min(1).optional(),
+  // 预检：只算不建，让教务先看清哪几次排不了、改完再提交。
+  dryRun: z.boolean().optional(),
 });
 
 /**
@@ -92,6 +94,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const created: { id: string; date: string; startTime: Date }[] = [];
   const skipped: { date: string; reason: string }[] = [];
+  // 预检时不落库，用它模拟「前面几节已占掉的课时」，才能算准后面还够不够。
+  const plannedHours = new Map<string, number>();
 
   for (const date of dates) {
     const startTime = torontoWallTimeToUtc(date, d.start);
@@ -101,6 +105,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       continue;
     }
     const durationHours = lessonHours(startTime, endTime);
+
+    if (d.dryRun) {
+      try {
+        await assertAllMembersHaveHours(prisma, members, durationHours, undefined, plannedHours);
+        await assertGroupNoConflict(prisma, {
+          startTime, endTime, teacherId, classroomId, members, excludeSessionId: "__none__",
+        });
+        for (const m of members) {
+          plannedHours.set(m.packageId, (plannedHours.get(m.packageId) ?? 0) + durationHours);
+        }
+        created.push({ id: "", date, startTime });
+      } catch (e) {
+        if (e instanceof ScheduleError) skipped.push({ date, reason: e.message });
+        else throw e;
+      }
+      continue;
+    }
 
     try {
       const row = await prisma.$transaction(async (tx) => {
@@ -135,9 +156,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   return NextResponse.json({
+    dryRun: !!d.dryRun,
     requested: dates.length,
     created: created.length,
     skipped,
     sessions: created,
-  }, { status: created.length ? 201 : 400 });
+    // 预检把日期回给前端展示，方便确认排在哪几天。
+    dates: created.map((c) => c.date),
+  }, { status: d.dryRun ? 200 : (created.length ? 201 : 400) });
 }

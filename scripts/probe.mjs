@@ -1142,6 +1142,46 @@ async function run() {
   const delConfirmed = await rhPrincipal.req("DELETE", `/api/schedule/${rsD.id}`);
   check(12, "已核销的课不得删除", delConfirmed.status === 400, `实际 ${delConfirmed.status}`);
 
+  // 一对一重复排课：预检只算不建；每周二连排，课时用完自动停
+  const recPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 8, pricePerHour: 100, totalAmount: 800, remainingHours: 8,
+      status: "ACTIVE", createdById: fx.admin.id, confirmedById: fx.admin.id, confirmedAt: new Date(),
+    },
+  });
+  const recBase = {
+    teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: recPkg.id,
+    classroomId: fx.rhRoom.id, startDate: "2027-10-05", start: "16:00", end: "18:00",
+    frequency: "WEEKLY", weekdays: [2], until: { type: "weeks", value: 8 },
+  };
+  const recDry = await rhPrincipal.req("POST", "/api/schedule/batch", { ...recBase, dryRun: true });
+  const afterDry = await prisma.scheduledLesson.count({ where: { packageId: recPkg.id } });
+  check(12, "重复排课预检只算不建",
+    recDry.status === 200 && recDry.body?.requested === 8 && afterDry === 0,
+    `计划 ${recDry.body?.requested} 次，预检后落库 ${afterDry} 条（应 0）`);
+
+  const recReal = await rhPrincipal.req("POST", "/api/schedule/batch", recBase);
+  const recCount = await prisma.scheduledLesson.count({ where: { packageId: recPkg.id } });
+  check(12, "一对一重复排课课时用完自动停（8h ÷ 2h = 4 节）",
+    recReal.status === 201 && recCount === 4 && recReal.body?.skipped?.length === 4,
+    `建了 ${recCount} 节，跳过 ${recReal.body?.skipped?.length} 次`);
+
+  // 班课课包不得走一对一批量
+  const recGroupPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: fx.student.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 10, pricePerHour: 50, totalAmount: 500, remainingHours: 10,
+      status: "ACTIVE", classType: "GROUP", createdById: fx.admin.id,
+    },
+  });
+  const wrongType = await rhPrincipal.req("POST", "/api/schedule/batch", { ...recBase, packageId: recGroupPkg.id, dryRun: true });
+  check(12, "班课课包不得走一对一重复排课", wrongType.status === 400, `实际 ${wrongType.status}`);
+
+  await prisma.scheduledLesson.deleteMany({ where: { packageId: recPkg.id } });
+  await prisma.coursePackage.delete({ where: { id: recPkg.id } });
+  await prisma.coursePackage.delete({ where: { id: recGroupPkg.id } });
+
   // 清理
   await prisma.courseDeduction.deleteMany({ where: { packageId: rsPkg.id } });
   await prisma.lessonLog.deleteMany({ where: { lesson: { packageId: rsPkg.id } } });

@@ -71,11 +71,14 @@ export async function assertAllMembersHaveHours(
   members: MemberLite[],
   durationHours: number,
   excludeSessionId?: string,
+  /** 预检时用：本批次里前面几节课已经"预定"掉的课时（课包 id → 小时数）。 */
+  extraPending?: Map<string, number>,
 ): Promise<void> {
   const short: string[] = [];
   for (const m of members) {
     const pending = await pendingHoursForPackage(db, m.packageId, excludeSessionId);
-    const available = roundHours(Number(m.package.remainingHours) - pending);
+    const planned = extraPending?.get(m.packageId) ?? 0;
+    const available = roundHours(Number(m.package.remainingHours) - pending - planned);
     if (durationHours > available) {
       short.push(`${m.student.name}（可用 ${available}h）`);
     }
