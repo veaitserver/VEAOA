@@ -32,11 +32,13 @@ export async function GET(req: Request) {
   const status = searchParams.get("status");
   const search = searchParams.get("search")?.trim();
   const teacherId = searchParams.get("teacherId");
+  const subjectId = searchParams.get("subjectId");
   const page = Number(searchParams.get("page")) || 0;
 
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
   if (teacherId) where.teacherId = teacherId;
+  if (subjectId) where.subjectId = subjectId;
   // 班级多起来后下拉找不着，前端用它做搜索：班名或科目名任一命中即可。
   if (search) {
     where.OR = [

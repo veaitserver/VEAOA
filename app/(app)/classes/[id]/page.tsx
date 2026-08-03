@@ -74,9 +74,17 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState<{ studentName: string; pkg: { id: string; remainingHours: number; subject: { name: string }; grade: { name: string } } }[]>([]);
 
-  // 排课
+  // 排课（单次 / 重复）
   const [showSchedule, setShowSchedule] = useState(false);
+  const [schedMode, setSchedMode] = useState<"once" | "repeat">("once");
   const [schedForm, setSchedForm] = useState({ date: "", start: "16:00", end: "18:00" });
+  const [repeat, setRepeat] = useState<{
+    frequency: "DAILY" | "WEEKDAYS" | "WEEKLY";
+    weekdays: number[];
+    untilType: "weeks" | "date" | "count";
+    weeks: string; untilDate: string; count: string;
+  }>({ frequency: "WEEKLY", weekdays: [], untilType: "weeks", weeks: "8", untilDate: "", count: "8" });
+  const [batchResult, setBatchResult] = useState<{ created: number; requested: number; skipped: { date: string; reason: string }[] } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/classes/${id}`);
@@ -145,6 +153,32 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
     });
     if (res.ok) { setShowSchedule(false); load(); }
     else setError((await res.json()).error ?? "排课失败");
+  }
+
+  async function createBatch() {
+    setError(""); setBatchResult(null);
+    if (!schedForm.date) { setError("请选择开始日期"); return; }
+    const until =
+      repeat.untilType === "weeks" ? { type: "weeks", value: Number(repeat.weeks) }
+      : repeat.untilType === "count" ? { type: "count", value: Number(repeat.count) }
+      : { type: "date", value: repeat.untilDate };
+    if (repeat.untilType === "date" && !repeat.untilDate) { setError("请选择结束日期"); return; }
+
+    const res = await fetch(`/api/classes/${id}/sessions/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDate: schedForm.date, start: schedForm.start, end: schedForm.end,
+        frequency: repeat.frequency,
+        weekdays: repeat.frequency === "WEEKLY" ? repeat.weekdays : undefined,
+        until,
+      }),
+    });
+    const body = await res.json();
+    if (res.ok) {
+      setBatchResult(body);
+      if (!body.skipped?.length) setShowSchedule(false);
+      load();
+    } else setError(body.error ?? "批量排课失败");
   }
 
   async function markAttendance(sessionId: string, studentId: string, attendance: string) {
@@ -334,12 +368,22 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
               </div>
               {showSchedule && (
                 <>
+                  <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+                    {([["once", "排一次"], ["repeat", "重复排课"]] as const).map(([v, label]) => (
+                      <button key={v} onClick={() => { setSchedMode(v); setBatchResult(null); setError(""); }}
+                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${schedMode === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   <p className="text-xs text-slate-500">
                     时间按多伦多时区。任何一位成员课时不足都无法排课，会提示是谁。
                   </p>
                   <div className="flex gap-3 flex-wrap items-end">
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">日期</label>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        {schedMode === "repeat" ? "开始日期" : "日期"}
+                      </label>
                       <input type="date" value={schedForm.date}
                         onChange={(e) => setSchedForm({ ...schedForm, date: e.target.value })} className={inputCls} />
                     </div>
@@ -353,9 +397,96 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
                       <input type="time" value={schedForm.end}
                         onChange={(e) => setSchedForm({ ...schedForm, end: e.target.value })} className={inputCls} />
                     </div>
-                    <button onClick={createSession}
-                      className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">确认排课</button>
+                    {schedMode === "once" && (
+                      <button onClick={createSession}
+                        className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">确认排课</button>
+                    )}
                   </div>
+
+                  {schedMode === "repeat" && (
+                    <div className="space-y-3 border-t border-slate-100 pt-3">
+                      <div className="flex gap-3 flex-wrap items-end">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">频率</label>
+                          <select value={repeat.frequency}
+                            onChange={(e) => setRepeat({ ...repeat, frequency: e.target.value as typeof repeat.frequency })}
+                            className={inputCls}>
+                            <option value="WEEKLY">每周固定几天</option>
+                            <option value="WEEKDAYS">每个工作日（周一至周五）</option>
+                            <option value="DAILY">每天</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">持续到</label>
+                          <div className="flex gap-2">
+                            <select value={repeat.untilType}
+                              onChange={(e) => setRepeat({ ...repeat, untilType: e.target.value as typeof repeat.untilType })}
+                              className={inputCls}>
+                              <option value="weeks">连续几周</option>
+                              <option value="count">共几次</option>
+                              <option value="date">到某日期</option>
+                            </select>
+                            {repeat.untilType === "weeks" && (
+                              <input type="number" min="1" max="52" value={repeat.weeks}
+                                onChange={(e) => setRepeat({ ...repeat, weeks: e.target.value })}
+                                className={`${inputCls} w-24`} />
+                            )}
+                            {repeat.untilType === "count" && (
+                              <input type="number" min="1" max="60" value={repeat.count}
+                                onChange={(e) => setRepeat({ ...repeat, count: e.target.value })}
+                                className={`${inputCls} w-24`} />
+                            )}
+                            {repeat.untilType === "date" && (
+                              <input type="date" value={repeat.untilDate}
+                                onChange={(e) => setRepeat({ ...repeat, untilDate: e.target.value })}
+                                className={inputCls} />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {repeat.frequency === "WEEKLY" && (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">每周哪几天（不选则用开始日期那天）</label>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {["周日", "周一", "周二", "周三", "周四", "周五", "周六"].map((label, dow) => {
+                              const on = repeat.weekdays.includes(dow);
+                              return (
+                                <button key={dow} type="button"
+                                  onClick={() => setRepeat({
+                                    ...repeat,
+                                    weekdays: on ? repeat.weekdays.filter((d) => d !== dow) : [...repeat.weekdays, dow],
+                                  })}
+                                  className={`px-3 py-1.5 rounded-lg text-sm border transition ${on ? "border-blue-500 bg-blue-50 text-blue-700 font-medium" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <button onClick={createBatch}
+                        className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+                        批量排课
+                      </button>
+                      <p className="text-xs text-slate-400">
+                        逐次校验，能排的先排；撞课或课时不足的会跳过并列出原因。单次最多 60 节。
+                      </p>
+                    </div>
+                  )}
+
+                  {batchResult && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+                      <p className="text-slate-700">
+                        计划 {batchResult.requested} 次，成功排了 <b className="text-green-700">{batchResult.created}</b> 次
+                        {batchResult.skipped.length > 0 && <>，跳过 <b className="text-amber-700">{batchResult.skipped.length}</b> 次</>}
+                      </p>
+                      {batchResult.skipped.map((s) => (
+                        <p key={s.date} className="text-xs text-amber-700">· {s.date}：{s.reason}</p>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
             </div>

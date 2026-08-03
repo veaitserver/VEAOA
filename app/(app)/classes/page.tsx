@@ -35,6 +35,9 @@ export default function ClassesPage() {
 
   const [items, setItems] = useState<GroupClass[]>([]);
   const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("");
+  const [teacherFilter, setTeacherFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -55,16 +58,29 @@ export default function ClassesPage() {
     setLoading(true);
     const params = new URLSearchParams({ page: String(page) });
     if (filter) params.set("status", filter);
+    if (search.trim()) params.set("search", search.trim());
+    if (subjectFilter) params.set("subjectId", subjectFilter);
+    if (teacherFilter) params.set("teacherId", teacherFilter);
     const res = await fetch(`/api/classes?${params}`);
     if (res.ok) {
       const d = await res.json();
       setItems(d.items); setTotal(d.total); setTotalPages(d.totalPages);
     }
     setLoading(false);
-  }, [filter, page]);
+  }, [filter, page, search, subjectFilter, teacherFilter]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [filter]);
+  // 搜索输入防抖，避免每敲一个字打一次接口。
+  useEffect(() => {
+    const t = setTimeout(() => { load(); }, 250);
+    return () => clearTimeout(t);
+  }, [load]);
+  useEffect(() => { setPage(1); }, [filter, search, subjectFilter, teacherFilter]);
+
+  // 科目/老师筛选项：进页面就要，不等打开新建表单。
+  useEffect(() => {
+    fetch("/api/admin/subjects").then((r) => (r.ok ? r.json() : [])).then(setSubjects);
+    fetch("/api/schedule/teachers").then((r) => (r.ok ? r.json() : [])).then(setTeachers);
+  }, []);
 
   useEffect(() => {
     if (!showForm) return;
@@ -173,13 +189,34 @@ export default function ClassesPage() {
         </div>
       )}
 
-      <div className="flex gap-2">
-        {TABS.map(([val, label]) => (
-          <button key={val} onClick={() => setFilter(val)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${filter === val ? "bg-blue-600 text-white border-blue-600" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-2">
+          {TABS.map(([val, label]) => (
+            <button key={val} onClick={() => setFilter(val)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${filter === val ? "bg-blue-600 text-white border-blue-600" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索班级名或科目..."
+            className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm w-52 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <select value={subjectFilter} onChange={(e) => setSubjectFilter(e.target.value)}
+            className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">全部科目</option>
+            {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select value={teacherFilter} onChange={(e) => setTeacherFilter(e.target.value)}
+            className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">全部老师</option>
+            {teachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          {(search || subjectFilter || teacherFilter) && (
+            <button onClick={() => { setSearch(""); setSubjectFilter(""); setTeacherFilter(""); }}
+              className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700">清除</button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">

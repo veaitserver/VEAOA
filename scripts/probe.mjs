@@ -1256,6 +1256,25 @@ async function run() {
   const acadReverse = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/${gsId}/reverse`, {});
   check(13, "教务不得撤销班课扣课", blocked(acadReverse), `实际 ${acadReverse.status}`);
 
+  // 重复排课：每周一/三连续 4 周 = 8 次；甲乙各剩 18h，每节 2h → 只够 9 节，
+  // 但这里 8 次都排得下，验证日期展开与逐次校验。
+  const batch = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/batch`, {
+    startDate: "2027-03-01", start: "18:00", end: "20:00",
+    frequency: "WEEKLY", weekdays: [1, 3], until: { type: "weeks", value: 4 },
+  });
+  check(13, "重复排课按每周指定日展开", batch.status === 201 && batch.body?.requested === 8,
+    `HTTP ${batch.status}，计划 ${batch.body?.requested} 次（应 8）`);
+
+  // 课时会被上面这批吃掉，再排一批应逐次因课时不足被跳过（而非整批报错）
+  const batch2 = await acadMkm.req("POST", `/api/classes/${gcId}/sessions/batch`, {
+    startDate: "2027-06-01", start: "18:00", end: "20:00",
+    frequency: "WEEKLY", weekdays: [1], until: { type: "count", value: 5 },
+  });
+  const shortSkip = (batch2.body?.skipped ?? []).some((s) => String(s.reason).includes("课时不足"));
+  check(13, "重复排课课时耗尽后逐次跳过并说明原因",
+    shortSkip && (batch2.body?.created ?? 0) < 5,
+    `成功 ${batch2.body?.created} 次，跳过 ${batch2.body?.skipped?.length} 次`);
+
   const oneReverse = await finance.req("POST", `/api/classes/${gcId}/sessions/${gsId}/reverse`, { packageId: gB.p.id });
   const gBBack = await prisma.coursePackage.findUnique({ where: { id: gB.p.id } });
   const gAKept = await prisma.coursePackage.findUnique({ where: { id: gA.p.id } });

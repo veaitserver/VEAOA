@@ -44,6 +44,21 @@ export function torontoDateKey(d: Date): string {
   return new Date(d.getTime() + off).toISOString().slice(0, 10);
 }
 
+/**
+ * 日历日推算：直接在 "YYYY-MM-DD" 上加减天数。
+ * 用 UTC 正午做锚点，跨夏令时也不会掉到前一天或后一天。
+ */
+export function addDaysToDateKey(dateKey: string, days: number): string {
+  const d = new Date(`${dateKey}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "YYYY-MM-DD" 是周几（0=周日 … 6=周六）。 */
+export function weekdayOfDateKey(dateKey: string): number {
+  return new Date(`${dateKey}T12:00:00.000Z`).getUTCDay();
+}
+
 /** 某时刻在多伦多的墙钟时间字符串 "HH:MM"（24 小时制）。 */
 export function formatTorontoTime(d: Date): string {
   const { hour, minute } = torontoClock(d);
