@@ -30,10 +30,20 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
+  const search = searchParams.get("search")?.trim();
+  const teacherId = searchParams.get("teacherId");
   const page = Number(searchParams.get("page")) || 0;
 
   const where: Record<string, unknown> = {};
   if (status) where.status = status;
+  if (teacherId) where.teacherId = teacherId;
+  // 班级多起来后下拉找不着，前端用它做搜索：班名或科目名任一命中即可。
+  if (search) {
+    where.OR = [
+      { name: { contains: search } },
+      { subject: { name: { contains: search } } },
+    ];
+  }
   const scope = campusScope(sessionUser);
   if (scope) where.campusId = scope;
 

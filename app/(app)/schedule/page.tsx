@@ -58,6 +58,7 @@ type GroupClassLite = {
   id: string; name: string; status: string;
   subject: { name: string };
   grade: { name: string } | null;
+  teacher: { id: string; name: string } | null;
   members: { id: string }[];
 };
 
@@ -317,19 +318,36 @@ function CreateModal({
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [studentPackages, setStudentPackages] = useState<Package[]>([]);
   const [classes, setClasses] = useState<GroupClassLite[]>([]);
+  const [classSearch, setClassSearch] = useState("");
+  const [selectedClass, setSelectedClass] = useState<GroupClassLite | null>(null);
   const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE", classId: "" });
 
   const isGroup = form.lessonType === "GROUP";
 
-  // 选了班课才去拉班级列表；未结班的才能排课。
+  /**
+   * 班级搜索：班级一多，下拉就找不着了，所以做成搜索 + 候选列表。
+   * 搜索走服务端（班名或科目名匹配），空关键词时列出本校区未结班的班级，
+   * 并把「当前老师带的班」排在最前 —— 点的是这位老师的格子，多半就是排他的班。
+   */
   useEffect(() => {
-    if (!isGroup || classes.length) return;
-    fetch("/api/classes")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: GroupClassLite[]) => setClasses(rows.filter((c) => c.status !== "FINISHED")));
-  }, [isGroup, classes.length]);
-
-  const selectedClass = classes.find((c) => c.id === form.classId);
+    if (!isGroup) return;
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams();
+      if (classSearch.trim()) qs.set("search", classSearch.trim());
+      fetch(`/api/classes?${qs}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((rows: GroupClassLite[]) => {
+          const open = rows.filter((c) => c.status !== "FINISHED");
+          open.sort((a, b) => {
+            const at = a.teacher?.id === teacherId ? 0 : 1;
+            const bt = b.teacher?.id === teacherId ? 0 : 1;
+            return at !== bt ? at - bt : a.name.localeCompare(b.name);
+          });
+          setClasses(open);
+        });
+    }, 250); // 输入防抖，避免每敲一个字打一次接口
+    return () => clearTimeout(t);
+  }, [isGroup, classSearch, teacherId]);
 
   async function search(q: string) {
     setStudentSearch(q);
@@ -368,7 +386,7 @@ function CreateModal({
             <div className="grid grid-cols-2 gap-2">
               {([["ONE_ON_ONE", "1 对 1"], ["GROUP", "班课"]] as const).map(([v, label]) => (
                 <button key={v} type="button"
-                  onClick={() => setForm(f => ({ ...f, lessonType: v, studentId: "", packageId: "", classId: "" }))}
+                  onClick={() => { setForm(f => ({ ...f, lessonType: v, studentId: "", packageId: "", classId: "" })); setSelectedClass(null); setClassSearch(""); }}
                   className={`py-2.5 rounded-lg text-sm font-medium border transition ${
                     form.lessonType === v
                       ? (v === "GROUP" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-blue-500 bg-blue-50 text-blue-700")
@@ -395,25 +413,54 @@ function CreateModal({
           {isGroup && (
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">班级 *</label>
-              <select value={form.classId} onChange={e => setForm(f => ({ ...f, classId: e.target.value }))}
-                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">选择班级</option>
-                {classes.map(c => (
-                  <option key={c.id} value={c.id} disabled={c.members.length === 0}>
-                    {c.name} — {c.subject.name}{c.grade ? ` · ${c.grade.name}` : ""}（{c.members.length} 人）
-                    {c.members.length === 0 ? " · 无成员" : ""}
-                  </option>
-                ))}
-              </select>
-              {classes.length === 0 && (
-                <p className="mt-1.5 text-xs text-slate-400">
-                  还没有可排课的班级，请先到「班级管理」建班并加入成员。
-                </p>
+              {selectedClass ? (
+                // 已选：显示为一张卡片，避免再从长列表里辨认选了哪个
+                <div className="flex items-center gap-2 px-3 py-2.5 border border-violet-300 bg-violet-50 rounded-lg">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-800 truncate">{selectedClass.name}</div>
+                    <div className="text-xs text-slate-500">
+                      {selectedClass.subject.name}{selectedClass.grade ? ` · ${selectedClass.grade.name}` : ""} · {selectedClass.members.length} 人
+                      {selectedClass.teacher ? ` · ${selectedClass.teacher.name}` : ""}
+                    </div>
+                  </div>
+                  <button type="button"
+                    onClick={() => { setSelectedClass(null); setForm(f => ({ ...f, classId: "" })); setClassSearch(""); }}
+                    className="text-xs text-violet-700 hover:underline shrink-0">更换</button>
+                </div>
+              ) : (
+                <>
+                  <input value={classSearch} onChange={e => setClassSearch(e.target.value)}
+                    placeholder="搜索班级名或科目..."
+                    className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  <div className="mt-1 border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-52 overflow-y-auto">
+                    {classes.length === 0 && (
+                      <p className="px-3 py-3 text-xs text-slate-400">
+                        {classSearch ? "没有匹配的班级" : "还没有可排课的班级，请先到「班级管理」建班并加入成员。"}
+                      </p>
+                    )}
+                    {classes.map(c => {
+                      const empty = c.members.length === 0;
+                      const mine = c.teacher?.id === teacherId;
+                      return (
+                        <button key={c.id} type="button" disabled={empty}
+                          onClick={() => { setSelectedClass(c); setForm(f => ({ ...f, classId: c.id })); }}
+                          className={`w-full text-left px-3 py-2 ${empty ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50"}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-800 truncate">{c.name}</span>
+                            {mine && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 shrink-0">本老师</span>}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {c.subject.name}{c.grade ? ` · ${c.grade.name}` : ""} · {empty ? "无成员，不能排课" : `${c.members.length} 人`}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               )}
               {selectedClass && (
                 <p className="mt-1.5 text-xs text-slate-500">
-                  全班 {selectedClass.members.length} 人，核销时每人各扣一次课时；
-                  任何一位成员课时不足都会拦下整节课。
+                  核销时每人各扣一次课时；任何一位成员课时不足都会拦下整节课。
                 </p>
               )}
             </div>
