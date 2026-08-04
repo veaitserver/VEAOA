@@ -47,6 +47,11 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [confirming, setConfirming] = useState(false);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
   const [managerId, setManagerId] = useState("");
+  const [showConvert, setShowConvert] = useState(false);
+  const [convOpts, setConvOpts] = useState<{ subjects: { id: string; name: string }[]; grades: { id: string; name: string }[] }>({ subjects: [], grades: [] });
+  const [convForm, setConvForm] = useState({ subjectId: "", gradeId: "", classType: "ONE_ON_ONE", totalHours: "", pricePerHour: "" });
+  const [convPreview, setConvPreview] = useState<{ creditHours: number; creditAmount: number; newTotal: number; topUp: number; surplus: number; needsFinance: boolean } | null>(null);
+  const [convMsg, setConvMsg] = useState("");
   const [showRefund, setShowRefund] = useState(false);
   const [refundHours, setRefundHours] = useState("");
   const [refundReason, setRefundReason] = useState("");
@@ -90,6 +95,57 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     await fetch(`/api/packages/${id}/finance-confirm`, { method: "POST" });
     setConfirming(false);
     load();
+  }
+
+  // 打开转化表单时才拉科目/年级，并用原包的值做默认，减少填写。
+  async function openConvert() {
+    setShowConvert(true); setConvMsg(""); setConvPreview(null);
+    const [subjects, grades] = await Promise.all([
+      fetch("/api/admin/subjects").then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/admin/grades").then((r) => (r.ok ? r.json() : [])),
+    ]);
+    setConvOpts({ subjects, grades });
+    setConvForm({
+      subjectId: subjects.find((s: { name: string }) => s.name === pkg?.subject.name)?.id ?? "",
+      gradeId: grades.find((g: { name: string }) => g.name === pkg?.grade.name)?.id ?? "",
+      classType: pkg?.classType === "GROUP" ? "GROUP" : "ONE_ON_ONE",
+      totalHours: "", pricePerHour: "",
+    });
+  }
+
+  function convPayload(dryRun: boolean) {
+    const hours = Number(convForm.totalHours);
+    const rate = Number(convForm.pricePerHour);
+    return {
+      subjectId: convForm.subjectId, gradeId: convForm.gradeId, classType: convForm.classType,
+      totalHours: hours, pricePerHour: rate,
+      totalAmount: Math.round(hours * rate * 100) / 100,
+      dryRun,
+    };
+  }
+
+  async function previewConvert() {
+    setConvMsg(""); setConvPreview(null);
+    if (!(Number(convForm.totalHours) > 0) || !(Number(convForm.pricePerHour) > 0)) {
+      setConvMsg("请填写新课包的课时与单价"); return;
+    }
+    const res = await fetch(`/api/packages/${id}/convert`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(convPayload(true)),
+    });
+    const body = await res.json();
+    if (res.ok) setConvPreview(body); else setConvMsg(body.error ?? "试算失败");
+  }
+
+  async function submitConvert() {
+    setConvMsg("");
+    const res = await fetch(`/api/packages/${id}/convert`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(convPayload(false)),
+    });
+    const body = await res.json();
+    if (res.ok) window.location.href = `/packages/${body.package.id}`;
+    else setConvMsg(body.error ?? "转化失败");
   }
 
   async function submitRefund() {
@@ -235,7 +291,103 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             申请退费
           </button>
         )}
+        {canRefund && pkg.status === "ACTIVE" && Number(pkg.remainingHours) > 0 && !showConvert && (
+          <button onClick={openConvert}
+            className="border border-slate-300 text-slate-700 px-5 py-2 rounded-lg text-sm font-medium hover:bg-slate-50">
+            转化课包
+          </button>
+        )}
       </div>
+
+      {/* 课包转化：原包剩余价值抵扣，差额补款，重建一张完整新课包 */}
+      {showConvert && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 max-w-2xl">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-800">转化课包</h2>
+            <button onClick={() => { setShowConvert(false); setConvMsg(""); setConvPreview(null); }}
+              className="text-slate-400 hover:text-slate-600">✕</button>
+          </div>
+          <p className="text-xs text-slate-500">
+            原包剩余 <b className="text-slate-700">{Number(pkg.remainingHours).toFixed(1)}h × {formatRate(pkg.pricePerHour)}</b> 的价值会内部抵扣（不实退给家长），
+            差额由家长补款，凑成一张完整的新课包，不产生碎课时。
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">新科目 *</label>
+              <select value={convForm.subjectId} onChange={(e) => { setConvForm({ ...convForm, subjectId: e.target.value }); setConvPreview(null); }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                {convOpts.subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">新年级 *</label>
+              <select value={convForm.gradeId} onChange={(e) => { setConvForm({ ...convForm, gradeId: e.target.value }); setConvPreview(null); }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                {convOpts.grades.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">授课形式 *</label>
+              <select value={convForm.classType} onChange={(e) => { setConvForm({ ...convForm, classType: e.target.value }); setConvPreview(null); }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                <option value="ONE_ON_ONE">一对一</option>
+                <option value="GROUP">班课</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">新课时 *</label>
+              <input type="number" min="1" step="1" value={convForm.totalHours}
+                onChange={(e) => { setConvForm({ ...convForm, totalHours: e.target.value }); setConvPreview(null); }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">新单价 *</label>
+              <input type="number" min="1" step="1" value={convForm.pricePerHour}
+                onChange={(e) => { setConvForm({ ...convForm, pricePerHour: e.target.value }); setConvPreview(null); }}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">新课包总价</label>
+              <div className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 font-medium text-slate-800">
+                {formatMoney(Math.round(Number(convForm.totalHours || 0) * Number(convForm.pricePerHour || 0) * 100) / 100)}
+              </div>
+            </div>
+          </div>
+
+          {convPreview && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-slate-500">原包抵扣（{convPreview.creditHours}h）</span><span className="font-medium text-green-700">+{formatMoney(convPreview.creditAmount)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">新课包总价</span><span className="font-medium text-slate-800">{formatMoney(convPreview.newTotal)}</span></div>
+              <div className="flex justify-between border-t border-slate-200 pt-1.5">
+                {convPreview.topUp > 0
+                  ? <><span className="text-slate-700 font-medium">家长需补款</span><span className="font-bold text-red-600">{formatMoney(convPreview.topUp)}</span></>
+                  : <><span className="text-slate-700 font-medium">多出（留在学生账户余额）</span><span className="font-bold text-green-700">{formatMoney(convPreview.surplus)}</span></>}
+              </div>
+              <p className="text-xs text-slate-500 pt-1">
+                {convPreview.needsFinance
+                  ? "新课包将置为「待财务确认」，财务收到补款后正式生效。"
+                  : "无需补款，新课包直接生效；多出的价值留在账户，可用于以后抵扣。"}
+              </p>
+            </div>
+          )}
+
+          {convMsg && <p className="text-red-600 text-sm">{convMsg}</p>}
+          <div className="flex items-center gap-3">
+            {!convPreview ? (
+              <button onClick={previewConvert}
+                className="bg-slate-100 text-slate-700 px-5 py-2 rounded-lg text-sm font-medium hover:bg-slate-200">
+                试算
+              </button>
+            ) : (
+              <button onClick={submitConvert}
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+                确认转化
+              </button>
+            )}
+            <span className="text-xs text-slate-400">先试算看清抵扣与补款，再确认</span>
+          </div>
+        </div>
+      )}
 
       {/* 退费申请表单 */}
       {showRefund && pkg.refundable && (

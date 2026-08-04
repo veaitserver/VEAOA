@@ -205,6 +205,10 @@ model CoursePackage {
   // 授课形式：ONE_ON_ONE 一对一 / GROUP 班课。签约时定死，与 signingType 是两个维度。
   // 只有 GROUP 课包能加入班级；ONE_ON_ONE 走单人排课。
   classType      String    @default("ONE_ON_ONE")
+  // 课包转化：本包由哪张包转来（1:1），以及转化时家长补的差额。
+  // 原包转出后置为 CONVERTED 并把剩余价值内部退回账户，新包用它抵扣。
+  convertedFromId String?  @unique
+  topUpAmount     Float?
   createdById    String
   confirmedById  String?    // 校长确认人
   confirmedAt    DateTime?
@@ -225,6 +229,9 @@ model CoursePackage {
   ledgerEntries LedgerEntry[]
   refunds       RefundRequest[]
   classMemberships GroupClassMember[]
+
+  convertedFrom CoursePackage? @relation("PackageConversion", fields: [convertedFromId], references: [id])
+  convertedTo   CoursePackage? @relation("PackageConversion")
 }
 
 model Classroom {

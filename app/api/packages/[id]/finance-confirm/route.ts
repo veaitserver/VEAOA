@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canFinanceConfirmPackage, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { recordEntries, packageActivationDrafts } from "@/lib/ledger";
+import { LedgerType } from "@/lib/enums";
 import { roundMoney } from "@/lib/money";
 
 /**
@@ -49,12 +50,33 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     });
     if (gate.count === 0) throw new AlreadyConfirmed();
 
-    await recordEntries(tx, sessionUser.id, packageActivationDrafts({
-      studentId: pkg.studentId,
-      packageId: pkg.id,
-      amount: roundMoney(Number(pkg.totalAmount)),
-      label: `${pkg.grade.name} · ${pkg.subject.name} ${pkg.totalHours}h`,
-    }));
+    const label = `${pkg.grade.name} · ${pkg.subject.name} ${pkg.totalHours}h`;
+    const total = roundMoney(Number(pkg.totalAmount));
+
+    if (pkg.convertedFromId) {
+      // 转化来的课包：原包剩余价值在转化那一步已经退回账户，这里只收补款，
+      // 否则会把抵扣的钱重复计一次收入，学生余额也平不了。
+      const topUp = roundMoney(Number(pkg.topUpAmount ?? 0));
+      const drafts = [];
+      if (topUp > 0) {
+        drafts.push({
+          studentId: pkg.studentId, type: LedgerType.PAYMENT, amount: topUp,
+          packageId: pkg.id, note: `转化补款：${label}`,
+        });
+      }
+      drafts.push({
+        studentId: pkg.studentId, type: LedgerType.PACKAGE_CHARGE, amount: -total,
+        packageId: pkg.id, note: `转化新建课包：${label}`,
+      });
+      await recordEntries(tx, sessionUser.id, drafts);
+    } else {
+      await recordEntries(tx, sessionUser.id, packageActivationDrafts({
+        studentId: pkg.studentId,
+        packageId: pkg.id,
+        amount: total,
+        label,
+      }));
+    }
 
     return tx.coursePackage.findUnique({ where: { id } });
   }).catch((e) => {

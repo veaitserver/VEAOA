@@ -76,6 +76,7 @@ export const PackageStatus = {
   PENDING_APPROVAL: "PENDING_APPROVAL", // 待校长确认
   PENDING_FINANCE: "PENDING_FINANCE",   // 校长已确认，待财务确认
   ACTIVE: "ACTIVE",                     // 财务确认，正式生效
+  CONVERTED: "CONVERTED",               // 已转化成另一张课包，剩余价值已结转
 } as const;
 export type PackageStatus = (typeof PackageStatus)[keyof typeof PackageStatus];
 
@@ -83,6 +84,7 @@ export const PACKAGE_STATUS_LABELS: Record<string, string> = {
   PENDING_APPROVAL: "待校长确认",
   PENDING_FINANCE: "待财务确认",
   ACTIVE: "已生效",
+  CONVERTED: "已转化",
 };
 
 // 签约类型：学生首张课包为新签（销售从线索成交），之后均为续费（由学管负责）。

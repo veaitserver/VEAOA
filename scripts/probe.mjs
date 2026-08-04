@@ -1350,6 +1350,117 @@ async function run() {
     `乙 ${gBBack.remainingHours}h（应 20）/ 甲 ${gAKept.remainingHours}h（应 18）`);
 
   await cleanupGroup();
+
+  // ── 阶段 14：课包转化（抵扣 + 补款 + 重建整包）────────────────────────────
+  console.log("\n阶段 14 — 课包转化");
+  const cvPhone = "6479998811";
+  const cleanupConvert = async () => {
+    const s = await prisma.student.findFirst({ where: { phone: cvPhone } });
+    if (!s) return;
+    await prisma.ledgerEntry.deleteMany({ where: { studentId: s.id } });
+    await prisma.coursePackage.updateMany({ where: { studentId: s.id }, data: { convertedFromId: null } });
+    await prisma.scheduledLesson.deleteMany({ where: { studentId: s.id } });
+    await prisma.coursePackage.deleteMany({ where: { studentId: s.id } });
+    await prisma.student.delete({ where: { id: s.id } });
+  };
+  await cleanupConvert();
+
+  const cvStudent = await prisma.student.create({
+    data: {
+      name: "转化-Probe", phone: cvPhone, campusId: "campus-markham",
+      gradeId: fx.grade.id, studentManagerId: "user-sm-mkm",
+    },
+  });
+  const mkCvPkg = (rate, hours) => prisma.coursePackage.create({
+    data: {
+      studentId: cvStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: hours, pricePerHour: rate, totalAmount: hours * rate, remainingHours: hours,
+      status: "ACTIVE", createdById: fx.admin.id,
+      financeConfirmedById: "user-finance", financeConfirmedAt: new Date(),
+    },
+  });
+  const cvBalance = async () => {
+    const e = await prisma.ledgerEntry.findMany({ where: { studentId: cvStudent.id } });
+    return Math.round(e.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100;
+  };
+
+  const cvPkgA = await mkCvPkg(60, 10); // 10h × $60 = $600
+  const cvBody = {
+    subjectId: fx.subject.id, gradeId: fx.grade.id, classType: "ONE_ON_ONE",
+    totalHours: 20, pricePerHour: 100, totalAmount: 2000,
+  };
+
+  // 销售无权转化（转化=后续课包，归学管/校长）
+  const cvBySales = await mkmSales.req("POST", `/api/packages/${cvPkgA.id}/convert`, cvBody);
+  check(14, "销售不得转化课包", blocked(cvBySales), `实际 ${cvBySales.status}`);
+
+  // 总价与课时×单价不符应被拒
+  const cvBadMath = await smMkm.req("POST", `/api/packages/${cvPkgA.id}/convert`, { ...cvBody, totalAmount: 1500 });
+  check(14, "新课包总价必须等于课时 × 单价", cvBadMath.status === 400, `实际 ${cvBadMath.status}`);
+
+  // 试算：抵扣 $600、新包 $2000、补款 $1400，需走财务
+  const cvDry = await smMkm.req("POST", `/api/packages/${cvPkgA.id}/convert`, { ...cvBody, dryRun: true });
+  const beforeCv = await prisma.coursePackage.count({ where: { studentId: cvStudent.id } });
+  check(14, "转化试算只算不做",
+    cvDry.status === 200 && cvDry.body?.creditAmount === 600 && cvDry.body?.topUp === 1400 && beforeCv === 1,
+    `抵扣 $${cvDry.body?.creditAmount} 补款 $${cvDry.body?.topUp}，课包数 ${beforeCv}（应 1）`);
+
+  // 正式转化
+  const cvDo = await smMkm.req("POST", `/api/packages/${cvPkgA.id}/convert`, cvBody);
+  const oldAfter = await prisma.coursePackage.findUnique({ where: { id: cvPkgA.id } });
+  check(14, "转化后原包置为已转化且剩余归零",
+    cvDo.status === 201 && oldAfter.status === "CONVERTED" && Number(oldAfter.remainingHours) === 0
+      && Number(oldAfter.totalAmount) === 0,
+    `状态 ${oldAfter.status}，剩余 ${oldAfter.remainingHours}h，总额 $${oldAfter.totalAmount}`);
+
+  const newPkgId = cvDo.body.package.id;
+  const newAfter = await prisma.coursePackage.findUnique({ where: { id: newPkgId } });
+  const balPending = await cvBalance();
+  check(14, "需补款时新包待财务确认，抵扣先挂在账户上",
+    newAfter.status === "PENDING_FINANCE" && balPending === 600,
+    `新包状态 ${newAfter.status}，余额 $${balPending}（应 $600）`);
+
+  // 已转化的包不能再转
+  const cvAgain = await smMkm.req("POST", `/api/packages/${cvPkgA.id}/convert`, cvBody);
+  check(14, "已转化的课包不得重复转化", cvAgain.status === 400, `实际 ${cvAgain.status}`);
+
+  // 财务确认收到补款 → 新包生效，余额归零（抵扣不被重复计收）
+  await finance.req("POST", `/api/packages/${newPkgId}/finance-confirm`);
+  const newActive = await prisma.coursePackage.findUnique({ where: { id: newPkgId } });
+  const balAfter = await cvBalance();
+  check(14, "补款到账后新包生效且账户余额归零",
+    newActive.status === "ACTIVE" && balAfter === 0,
+    `新包 ${newActive.status}，余额 $${balAfter}（应 $0）`);
+
+  // 转成更便宜的：无需补款，直接生效，多出的留在账户余额
+  const cvPkgB = await mkCvPkg(100, 10); // $1000
+  const cvCheap = await smMkm.req("POST", `/api/packages/${cvPkgB.id}/convert`, {
+    subjectId: fx.subject.id, gradeId: fx.grade.id, classType: "GROUP",
+    totalHours: 10, pricePerHour: 60, totalAmount: 600,
+  });
+  const cheapPkg = await prisma.coursePackage.findUnique({ where: { id: cvCheap.body.package.id } });
+  const balCheap = await cvBalance();
+  check(14, "转成更便宜的直接生效，多出的留作账户余额",
+    cvCheap.status === 201 && cheapPkg.status === "ACTIVE" && cvCheap.body.surplus === 400 && balCheap === 400,
+    `新包 ${cheapPkg.status}，多出 $${cvCheap.body?.surplus}，余额 $${balCheap}（应 $400）`);
+
+  // 有已排未核销的课时不能转化
+  const cvPkgC = await mkCvPkg(80, 10);
+  await prisma.scheduledLesson.create({
+    data: {
+      teacherId: mkmTeacherRow.id, studentId: cvStudent.id, packageId: cvPkgC.id,
+      classroomId: "room-mkm-101",
+      startTime: new Date(fx.base.getTime() + 300 * 86400000),
+      endTime: new Date(fx.base.getTime() + 300 * 86400000 + 2 * 3600000),
+    },
+  });
+  const cvPending = await smMkm.req("POST", `/api/packages/${cvPkgC.id}/convert`, {
+    subjectId: fx.subject.id, gradeId: fx.grade.id, classType: "ONE_ON_ONE",
+    totalHours: 5, pricePerHour: 100, totalAmount: 500,
+  });
+  check(14, "有已排未核销的课时不得转化", cvPending.status === 400, `实际 ${cvPending.status}`);
+
+  await cleanupConvert();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -1365,7 +1476,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;
