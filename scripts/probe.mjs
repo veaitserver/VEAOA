@@ -977,6 +977,33 @@ async function run() {
     Math.abs(Number(refPkgAfter.totalAmount) - Number(refPkgAfter.totalHours) * Number(refPkgAfter.pricePerHour)) < 0.005,
     `$${refPkgAfter.totalAmount} vs ${refPkgAfter.totalHours}h × $${refPkgAfter.pricePerHour}`);
 
+  // 课包生效即入账：待审批阶段不记账（钱还没收），财务确认那一刻记
+  // 「签约收款 + 课包扣款」两条，净额为 0。
+  const ledStudent = await prisma.student.create({
+    data: { name: "入账-Probe", phone: "6470009903", campusId: "campus-markham", gradeId: fx.grade.id, salesId: mkmSales.session.user.id },
+  });
+  const ledPkgRes = await mkmSales.req("POST", "/api/packages", {
+    studentId: ledStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+    totalHours: 10, pricePerHour: 100, totalAmount: 1000,
+  });
+  const beforeLedger = await prisma.ledgerEntry.count({ where: { studentId: ledStudent.id } });
+  check(10, "课包待审批阶段不记账（钱还没收）", beforeLedger === 0, `流水 ${beforeLedger} 条（应 0）`);
+
+  await mkmPrincipal.req("POST", `/api/packages/${ledPkgRes.body.id}/confirm`, {});
+  await finance.req("POST", `/api/packages/${ledPkgRes.body.id}/finance-confirm`);
+
+  // 生效后改金额要补记差额，否则账本停留在旧价（生效即入账已在阶段 7 断言）
+  await finance.req("PUT", `/api/packages/${ledPkgRes.body.id}`, { totalHours: 12, pricePerHour: 100, totalAmount: 1200 });
+  const adjEntries = await prisma.ledgerEntry.findMany({ where: { studentId: ledStudent.id } });
+  const adjBalance = Math.round(adjEntries.reduce((s, e) => s + Number(e.amount), 0) * 100) / 100;
+  check(10, "生效后改金额补记差额且余额仍为零",
+    adjEntries.length === 4 && adjBalance === 0,
+    `流水 ${adjEntries.length} 条（应 4），余额 $${adjBalance}`);
+
+  await prisma.ledgerEntry.deleteMany({ where: { studentId: ledStudent.id } });
+  await prisma.coursePackage.deleteMany({ where: { studentId: ledStudent.id } });
+  await prisma.student.delete({ where: { id: ledStudent.id } });
+
   // 教务无权查看账户流水（涉及金额）
   const acadLedger = await acad.req("GET", `/api/students/${refStudent.id}/ledger`);
   check(10, "教务不得查看学生账户流水", blocked(acadLedger), `实际 ${acadLedger.status}`);
