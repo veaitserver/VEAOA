@@ -251,10 +251,13 @@ model ScheduledLesson {
   teacherId   String
   studentId   String
   packageId   String
-  classroomId String
+  // 线上课不占实体教室，classroomId 为空；线下课必填。
+  classroomId String?
   startTime   DateTime
   endTime     DateTime
   lessonType  String   @default("ONE_ON_ONE")
+  // ONSITE 线下 / ONLINE 线上
+  deliveryMode String  @default("ONSITE")
   createdAt   DateTime @default(now())
   // 考勤：PRESENT 到课 / LEAVE 请假 / NO_SHOW 旷课；null = 尚未标记（按到课处理）。
   // 扣不扣课时由考勤决定：1对1 请假不扣、旷课照扣；班课请假默认照扣（可手动撤销）。
@@ -266,7 +269,7 @@ model ScheduledLesson {
   teacher   User          @relation(fields: [teacherId], references: [id])
   student   Student       @relation(fields: [studentId], references: [id])
   package   CoursePackage @relation(fields: [packageId], references: [id])
-  classroom Classroom     @relation(fields: [classroomId], references: [id])
+  classroom Classroom?    @relation(fields: [classroomId], references: [id])
   attendanceMarker User?  @relation("AttendanceMarker", fields: [attendanceById], references: [id])
 
   log LessonLog?
@@ -383,6 +386,8 @@ model GroupClass {
   gradeId     String?
   teacherId   String?  // 默认老师，排课时可改
   classroomId String?  // 默认教室
+  // 班级默认授课形式，排课时预填，单次课仍可改。ONSITE 线下 / ONLINE 线上
+  deliveryMode String  @default("ONSITE")
   capacity    Int?     // 席位上限，留空为不限
   // RECRUITING 招生中 / ONGOING 进行中 / FINISHED 已结班
   status      String   @default("RECRUITING")
@@ -428,9 +433,12 @@ model GroupSession {
   id          String   @id @default(cuid())
   classId     String
   teacherId   String
-  classroomId String
+  // 线上课次不占实体教室，classroomId 为空；线下必填。
+  classroomId String?
   startTime   DateTime
   endTime     DateTime
+  // ONSITE 线下 / ONLINE 线上
+  deliveryMode String  @default("ONSITE")
   // SCHEDULED 已排课 / LOGGED 待确认 / CONFIRMED 已核销
   status      String   @default("SCHEDULED")
   // 老师反馈：整班一条
@@ -443,7 +451,7 @@ model GroupSession {
 
   class     GroupClass @relation(fields: [classId], references: [id])
   teacher   User       @relation("SessionTeacher", fields: [teacherId], references: [id])
-  classroom Classroom  @relation(fields: [classroomId], references: [id])
+  classroom Classroom? @relation(fields: [classroomId], references: [id])
   logger    User?      @relation("SessionLogger", fields: [loggedById], references: [id])
   confirmer User?      @relation("SessionConfirmer", fields: [confirmedById], references: [id])
 

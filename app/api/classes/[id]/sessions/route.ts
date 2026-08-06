@@ -5,14 +5,15 @@ import { canManageGroupClass, denyCrossCampus, type SessionUser } from "@/lib/pe
 import { lessonHours } from "@/lib/hours";
 import { ScheduleError } from "@/lib/scheduling";
 import { activeMembers, assertAllMembersHaveHours, assertGroupNoConflict } from "@/lib/groupClass";
-import { AttendanceStatus, GroupClassStatus, GroupSessionStatus } from "@/lib/enums";
+import { AttendanceStatus, GroupClassStatus, GroupSessionStatus, DeliveryMode } from "@/lib/enums";
 import { z } from "zod";
 
 const createSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
   teacherId: z.string().min(1).optional(),
-  classroomId: z.string().min(1).optional(),
+  classroomId: z.string().min(1).nullish(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).optional(),
 }).refine(
   (d) => {
     const s = new Date(d.startTime).getTime();
@@ -53,9 +54,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const teacherId = parsed.data.teacherId ?? cls.teacherId;
-  const classroomId = parsed.data.classroomId ?? cls.classroomId;
   if (!teacherId) return NextResponse.json({ error: "请指定老师（班级未设默认老师）" }, { status: 400 });
-  if (!classroomId) return NextResponse.json({ error: "请指定教室（班级未设默认教室）" }, { status: 400 });
+
+  // 形式未指定就沿用班级默认；线上课不占教室，线下课教室缺省取班级默认。
+  const deliveryMode = parsed.data.deliveryMode ?? cls.deliveryMode;
+  const classroomId = deliveryMode === DeliveryMode.ONLINE
+    ? null
+    : (parsed.data.classroomId ?? cls.classroomId);
+  if (deliveryMode === DeliveryMode.ONSITE && !classroomId) {
+    return NextResponse.json({ error: "请指定教室（班级未设默认教室）" }, { status: 400 });
+  }
 
   const startTime = new Date(parsed.data.startTime);
   const endTime = new Date(parsed.data.endTime);
@@ -70,9 +78,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       || !teacher.campuses.some((c) => c.campusId === cls.campusId)) {
     return NextResponse.json({ error: "老师不是该校区的在职老师" }, { status: 400 });
   }
-  const room = await prisma.classroom.findUnique({ where: { id: classroomId }, select: { campusId: true } });
-  if (!room || room.campusId !== cls.campusId) {
-    return NextResponse.json({ error: "教室不属于该校区" }, { status: 400 });
+  if (classroomId) {
+    const room = await prisma.classroom.findUnique({ where: { id: classroomId }, select: { campusId: true } });
+    if (!room || room.campusId !== cls.campusId) {
+      return NextResponse.json({ error: "教室不属于该校区" }, { status: 400 });
+    }
   }
 
   try {
@@ -84,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const row = await tx.groupSession.create({
         data: {
-          classId: id, teacherId, classroomId, startTime, endTime,
+          classId: id, teacherId, classroomId, deliveryMode, startTime, endTime,
           status: GroupSessionStatus.SCHEDULED,
           // 排课当时在册的人固定下来，之后插班的人不会被追溯到这节课。
           attendances: {

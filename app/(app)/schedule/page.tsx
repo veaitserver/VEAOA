@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { isDepleted, isLowOnHours, LOW_HOURS_THRESHOLD, roundHours } from "@/lib/hours";
 import { torontoWallTimeToUtc, torontoDateKey, torontoClock, formatTorontoTime } from "@/lib/datetime";
 import { useSession } from "next-auth/react";
-import { ATTENDANCE_LABELS } from "@/lib/enums";
+import { ATTENDANCE_LABELS, DELIVERY_MODE_LABELS } from "@/lib/enums";
 
 const ATTENDANCE_COLORS: Record<string, string> = {
   PRESENT: "bg-green-100 text-green-700",
@@ -39,7 +39,8 @@ type Lesson = {
     studentId: string;
     studentName: string;
     subjectName: string;
-    classroomName: string;
+    classroomName: string | null;
+    deliveryMode: string;
     packageId: string;
     lessonType: string;
     hasLog: boolean;
@@ -65,6 +66,7 @@ type GroupClassLite = {
 /** 排课表单提交内容；带 repeat 时走批量接口。 */
 type SaveData = {
   studentId: string; packageId: string; classroomId: string; lessonType: string; classId: string;
+  deliveryMode: string;
   repeat?: {
     frequency: "DAILY" | "WEEKDAYS" | "WEEKLY";
     weekdays: number[];
@@ -279,7 +281,7 @@ function TeacherDayCard({
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-slate-800 text-sm truncate">{ep.studentName}</div>
-                  <div className="text-xs text-slate-500 truncate">{ep.subjectName} · {ep.classroomName}</div>
+                  <div className="text-xs text-slate-500 truncate">{ep.subjectName} · {ep.deliveryMode === "ONLINE" ? "线上" : (ep.classroomName ?? "—")}</div>
                 </div>
                 {/* Status badge */}
                 <div className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium
@@ -330,7 +332,7 @@ function CreateModal({
   const [classes, setClasses] = useState<GroupClassLite[]>([]);
   const [classSearch, setClassSearch] = useState("");
   const [selectedClass, setSelectedClass] = useState<GroupClassLite | null>(null);
-  const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE", classId: "" });
+  const [form, setForm] = useState({ studentId: "", packageId: "", classroomId: "", lessonType: "ONE_ON_ONE", classId: "", deliveryMode: "ONSITE" });
   // 重复排课（一对一与班课通用）
   const [repeatOn, setRepeatOn] = useState(false);
   const [rep, setRep] = useState<{
@@ -541,14 +543,37 @@ function CreateModal({
               })()}
             </div>
           )}
+          {/* 上课形式：线上课不占实体教室，所以选线上就把教室收起来 */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">教室 *</label>
-            <select value={form.classroomId} onChange={e => setForm(f => ({ ...f, classroomId: e.target.value }))}
-              className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">选择教室</option>
-              {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}（{c.campus.name}）</option>)}
-            </select>
+            <label className="block text-xs font-medium text-slate-600 mb-1">上课形式 *</label>
+            <div className="flex gap-2">
+              {(["ONSITE", "ONLINE"] as const).map(m => (
+                <button key={m} type="button"
+                  onClick={() => setForm(f => ({ ...f, deliveryMode: m, classroomId: m === "ONLINE" ? "" : f.classroomId }))}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition ${
+                    form.deliveryMode === m
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                  }`}>
+                  {DELIVERY_MODE_LABELS[m]}
+                </button>
+              ))}
+            </div>
           </div>
+          {form.deliveryMode === "ONSITE" ? (
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">教室 *</label>
+              <select value={form.classroomId} onChange={e => setForm(f => ({ ...f, classroomId: e.target.value }))}
+                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">选择教室</option>
+                {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}（{c.campus.name}）</option>)}
+              </select>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
+              线上课不占用实体教室，同一时段可以有多节；老师和学生的时间冲突照常检查。
+            </p>
+          )}
           {/* 重复排课：长期固定时段的学生/班级常用 */}
           <div className="border-t border-slate-100 pt-3">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -768,7 +793,12 @@ export default function SchedulePage() {
 
   async function handleSave(formData: SaveData) {
     const isGroup = formData.lessonType === "GROUP";
-    if (!modalTeacherId || !formData.classroomId) { setModalError("请填写所有必填字段"); return; }
+    const needsRoom = formData.deliveryMode !== "ONLINE";
+    if (!modalTeacherId || (needsRoom && !formData.classroomId)) {
+      setModalError(needsRoom ? "请填写所有必填字段（含教室）" : "请填写所有必填字段"); return;
+    }
+    // 线上课一律不带教室，服务端也会再抹一次。
+    const roomId = needsRoom ? formData.classroomId : null;
     if (isGroup ? !formData.classId : (!formData.studentId || !formData.packageId)) {
       setModalError(isGroup ? "请选择班级" : "请选择学生与课包"); return;
     }
@@ -787,11 +817,11 @@ export default function SchedulePage() {
         weekdays: formData.repeat.frequency === "WEEKLY" ? formData.repeat.weekdays : undefined,
         until: formData.repeat.until,
         ...(isGroup
-          ? { teacherId: modalTeacherId, classroomId: formData.classroomId }
+          ? { teacherId: modalTeacherId, classroomId: roomId, deliveryMode: formData.deliveryMode }
           : {
               teacherId: modalTeacherId, studentId: formData.studentId,
-              packageId: formData.packageId, classroomId: formData.classroomId,
-              lessonType: formData.lessonType,
+              packageId: formData.packageId, classroomId: roomId,
+              lessonType: formData.lessonType, deliveryMode: formData.deliveryMode,
             }),
       };
       const post = (dryRun: boolean) =>
@@ -825,7 +855,7 @@ export default function SchedulePage() {
       ? await fetch(`/api/classes/${formData.classId}/sessions`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            teacherId: modalTeacherId, classroomId: formData.classroomId,
+            teacherId: modalTeacherId, classroomId: roomId, deliveryMode: formData.deliveryMode,
             startTime: startTime.toISOString(), endTime: endTime.toISOString(),
           }),
         })
@@ -833,7 +863,7 @@ export default function SchedulePage() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             teacherId: modalTeacherId, studentId: formData.studentId, packageId: formData.packageId,
-            classroomId: formData.classroomId, lessonType: formData.lessonType,
+            classroomId: roomId, lessonType: formData.lessonType, deliveryMode: formData.deliveryMode,
             startTime: startTime.toISOString(), endTime: endTime.toISOString(),
           }),
         });
@@ -993,7 +1023,8 @@ export default function SchedulePage() {
                 [detail.extendedProps.isGroup ? "班级" : "学生", detail.extendedProps.studentName],
                 ["老师", detail.extendedProps.teacherName],
                 ["科目", detail.extendedProps.subjectName],
-                ["教室", detail.extendedProps.classroomName],
+                ["地点", detail.extendedProps.deliveryMode === "ONLINE"
+                  ? "线上" : (detail.extendedProps.classroomName ?? "—")],
                 ["时间", `${fmtTime(new Date(detail.start))} – ${fmtTime(new Date(detail.end))}`],
                 ["类型", detail.extendedProps.isGroup ? `班课（${detail.extendedProps.memberCount ?? 0} 人）` : "1 对 1"],
                 ["状态", detail.extendedProps.isConfirmed ? "✅ 已核销" : detail.extendedProps.hasLog ? "⏳ 待确认" : "📅 已排课"],

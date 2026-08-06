@@ -14,6 +14,7 @@ const createSchema = z.object({
   gradeId: z.string().min(1).optional().nullable(),
   teacherId: z.string().min(1).optional().nullable(),
   classroomId: z.string().min(1).optional().nullable(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).default("ONSITE"),
   capacity: z.number().int().positive().max(200).optional().nullable(),
   notes: z.string().max(1000).optional().nullable(),
 });
@@ -116,6 +117,7 @@ export async function POST(req: Request) {
       gradeId: d.gradeId || null,
       teacherId: d.teacherId || null,
       classroomId: d.classroomId || null,
+      deliveryMode: d.deliveryMode,
       capacity: d.capacity ?? null,
       notes: d.notes?.trim() || null,
       status: GroupClassStatus.RECRUITING,

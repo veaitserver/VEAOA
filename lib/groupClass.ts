@@ -94,12 +94,14 @@ export async function assertAllMembersHaveHours(
 /**
  * 班课的时段冲突检查：老师、教室、以及每一个成员学生。
  * 两张课表都要查 —— 成员可能同时有一对一的课，或在别的班级有课。
+ *
+ * 线上课次不占实体教室（classroomId 为空），教室这一维直接略过。
  */
 export async function assertGroupNoConflict(
   db: Db,
   args: {
     startTime: Date; endTime: Date;
-    teacherId: string; classroomId: string;
+    teacherId: string; classroomId: string | null;
     members: MemberLite[];
     excludeSessionId: string;
   },
@@ -108,10 +110,11 @@ export async function assertGroupNoConflict(
     startTime: { lt: args.endTime },
     endTime: { gt: args.startTime },
   };
+  const roomDim = args.classroomId ? [{ classroomId: args.classroomId }] : [];
 
   // 老师 / 教室：一对一课表
   const lessonClash = await db.scheduledLesson.findFirst({
-    where: { ...overlapLesson, OR: [{ teacherId: args.teacherId }, { classroomId: args.classroomId }] },
+    where: { ...overlapLesson, OR: [{ teacherId: args.teacherId }, ...roomDim] },
   });
   if (lessonClash) {
     const dim = lessonClash.teacherId === args.teacherId ? "老师" : "教室";
@@ -123,7 +126,7 @@ export async function assertGroupNoConflict(
     where: {
       id: { not: args.excludeSessionId },
       ...overlapLesson,
-      OR: [{ teacherId: args.teacherId }, { classroomId: args.classroomId }],
+      OR: [{ teacherId: args.teacherId }, ...roomDim],
     },
   });
   if (sessionClash) {

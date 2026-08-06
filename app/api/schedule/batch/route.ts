@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canSchedule, type SessionUser } from "@/lib/permissions";
 import { lessonHours, roundHours } from "@/lib/hours";
-import { validateTargets, assertInventory, assertNoConflict, ScheduleError } from "@/lib/scheduling";
+import { validateTargets, assertInventory, assertNoConflict, normalizeLocation, ScheduleError } from "@/lib/scheduling";
 import { torontoWallTimeToUtc } from "@/lib/datetime";
 import { expandRecurrence, MAX_OCCURRENCES, type Frequency } from "@/lib/recurrence";
 import { z } from "zod";
@@ -12,7 +12,9 @@ const schema = z.object({
   teacherId: z.string().min(1),
   studentId: z.string().min(1),
   packageId: z.string().min(1),
-  classroomId: z.string().min(1),
+  // 线上课不选教室。
+  classroomId: z.string().min(1).nullish(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).default("ONSITE"),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   start: z.string().regex(/^\d{2}:\d{2}$/),
   end: z.string().regex(/^\d{2}:\d{2}$/),
@@ -47,9 +49,12 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   const d = parsed.data;
 
+  // 地点在预检和逐条落库两处都要用，所以提到 try 外面。
+  let loc: { deliveryMode: string; classroomId: string | null };
   try {
+    loc = normalizeLocation(d.deliveryMode, d.classroomId);
     await validateTargets(sessionUser, {
-      studentId: d.studentId, classroomId: d.classroomId, teacherId: d.teacherId,
+      studentId: d.studentId, classroomId: loc.classroomId, teacherId: d.teacherId,
     });
   } catch (e) {
     if (e instanceof ScheduleError) return NextResponse.json({ error: e.message }, { status: e.status });
@@ -98,7 +103,7 @@ export async function POST(req: Request) {
         });
         await assertNoConflict(prisma, {
           startTime, endTime,
-          teacherId: d.teacherId, classroomId: d.classroomId, studentId: d.studentId,
+          teacherId: d.teacherId, classroomId: loc.classroomId, studentId: d.studentId,
           excludeLessonId: "__none__",
         });
         plannedHours = roundHours(plannedHours + durationHours);
@@ -118,13 +123,14 @@ export async function POST(req: Request) {
         const lesson = await tx.scheduledLesson.create({
           data: {
             teacherId: d.teacherId, studentId: d.studentId, packageId: d.packageId,
-            classroomId: d.classroomId, startTime, endTime, lessonType: d.lessonType,
+            classroomId: loc.classroomId, deliveryMode: loc.deliveryMode,
+            startTime, endTime, lessonType: d.lessonType,
           },
         });
 
         await assertNoConflict(tx, {
           startTime, endTime,
-          teacherId: d.teacherId, classroomId: d.classroomId, studentId: d.studentId,
+          teacherId: d.teacherId, classroomId: loc.classroomId, studentId: d.studentId,
           excludeLessonId: lesson.id,
         });
         return lesson;

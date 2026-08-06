@@ -8,6 +8,7 @@ import {
   sourceCategoryLabel, deriveStage, stageLabel, STAGE_COLORS, FUNNEL_STAGES, CONTACT_APP_LABELS, type LeadInfo,
 } from "@/lib/leadLabels";
 import { SIGNING_TYPE_LABELS, LEDGER_TYPE_LABELS } from "@/lib/enums";
+import LocationTag from "@/components/LocationTag";
 
 const LEDGER_COLORS: Record<string, string> = {
   PAYMENT: "bg-green-100 text-green-700",
@@ -54,7 +55,7 @@ type LedgerEntry = {
 
 type Lesson = {
   id: string; startTime: string; endTime: string;
-  teacher: { name: string }; classroom: { name: string };
+  teacher: { name: string }; classroom: { name: string } | null; deliveryMode: string;
   package: { subject: { name: string } };
   log?: { notes: string; confirmedAt?: string; deduction?: object };
 };
@@ -405,7 +406,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-800">{l.package.subject.name}</td>
                   <td className="px-4 py-3 text-sm text-slate-500">{l.teacher.name}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{l.classroom.name}</td>
+                  <td className="px-4 py-3 text-sm text-slate-500"><LocationTag deliveryMode={l.deliveryMode} classroomName={l.classroom?.name} /></td>
                   <td className="px-4 py-3">
                     {l.log?.deduction ? (
                       <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已核销</span>

@@ -8,6 +8,7 @@ import {
   GROUP_CLASS_STATUS_LABELS, GROUP_SESSION_STATUS_LABELS, ATTENDANCE_LABELS, GroupClassStatus,
 } from "@/lib/enums";
 import { torontoDateKey, formatTorontoTime, torontoWallTimeToUtc } from "@/lib/datetime";
+import LocationTag from "@/components/LocationTag";
 
 type Member = {
   id: string; joinedAt: string; leftAt: string | null;
@@ -26,7 +27,7 @@ type Attendance = {
 type Session = {
   id: string; startTime: string; endTime: string; status: string;
   notes: string | null; loggedAt: string | null; confirmedAt: string | null;
-  teacher: { name: string }; classroom: { name: string };
+  teacher: { name: string }; classroom: { name: string } | null; deliveryMode: string;
   attendances: Attendance[];
 };
 
@@ -38,6 +39,7 @@ type ClassDetail = {
   grade: { id: string; name: string } | null;
   teacher: { id: string; name: string } | null;
   classroom: { id: string; name: string } | null;
+  deliveryMode: string;
   creator: { name: string };
   members: Member[];
   sessions: Session[];
@@ -276,7 +278,7 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
           ["科目", cls.subject.name],
           ["年级", cls.grade?.name ?? "不限"],
           ["默认老师", cls.teacher?.name ?? "—"],
-          ["默认教室", cls.classroom?.name ?? "—"],
+          ["默认教室", cls.deliveryMode === "ONLINE" ? "线上（不占教室）" : (cls.classroom?.name ?? "—")],
           ["在册人数", `${activeMembers.length}${cls.capacity ? ` / ${cls.capacity}` : ""}`],
           ["课次", String(cls.sessions.length)],
           ["创建人", cls.creator.name],
@@ -560,7 +562,7 @@ export default function ClassDetailPage({ params }: { params: Promise<{ id: stri
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SESSION_COLORS[s.status]}`}>
                   {GROUP_SESSION_STATUS_LABELS[s.status]}
                 </span>
-                <span className="text-xs text-slate-400">{s.teacher.name} · {s.classroom.name}</span>
+                <span className="text-xs text-slate-400">{s.teacher.name} · <LocationTag deliveryMode={s.deliveryMode} classroomName={s.classroom?.name} /></span>
                 <div className="ml-auto flex gap-2">
                   {canManage && s.status === "LOGGED" && (
                     <button onClick={() => confirmSession(s.id)}

@@ -5,14 +5,15 @@ import { canManageGroupClass, denyCrossCampus, type SessionUser } from "@/lib/pe
 import { lessonHours } from "@/lib/hours";
 import { ScheduleError } from "@/lib/scheduling";
 import { activeMembers, assertAllMembersHaveHours, assertGroupNoConflict } from "@/lib/groupClass";
-import { GroupSessionStatus } from "@/lib/enums";
+import { GroupSessionStatus, DeliveryMode } from "@/lib/enums";
 import { z } from "zod";
 
 const updateSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
   teacherId: z.string().min(1).optional(),
-  classroomId: z.string().min(1).optional(),
+  classroomId: z.string().min(1).nullish(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).optional(),
 }).refine(
   (d) => {
     const s = new Date(d.startTime).getTime();
@@ -59,7 +60,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const teacherId = parsed.data.teacherId ?? s.teacherId;
-  const classroomId = parsed.data.classroomId ?? s.classroomId;
+  const deliveryMode = parsed.data.deliveryMode ?? s.deliveryMode;
+  const classroomId = deliveryMode === DeliveryMode.ONLINE
+    ? null
+    : (parsed.data.classroomId === undefined ? s.classroomId : parsed.data.classroomId);
+  if (deliveryMode === DeliveryMode.ONSITE && !classroomId) {
+    return NextResponse.json({ error: "线下课必须选择教室" }, { status: 400 });
+  }
   const startTime = new Date(parsed.data.startTime);
   const endTime = new Date(parsed.data.endTime);
   const durationHours = lessonHours(startTime, endTime);
@@ -72,7 +79,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
       const row = await tx.groupSession.update({
         where: { id: sessionId },
-        data: { startTime, endTime, teacherId, classroomId },
+        data: { startTime, endTime, teacherId, classroomId, deliveryMode },
         include: {
           teacher: { select: { name: true } },
           classroom: { select: { name: true } },

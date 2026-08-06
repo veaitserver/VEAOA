@@ -28,7 +28,7 @@ type Deduction = {
 
 type LessonRef = {
   id: string; startTime: string; endTime: string;
-  teacher: { name: string }; classroom: { name: string };
+  teacher: { name: string }; classroom: { name: string } | null; deliveryMode: string;
 };
 
 const STATUS_LABELS: Record<string, string> = {

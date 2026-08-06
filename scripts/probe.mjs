@@ -1475,6 +1475,159 @@ async function run() {
   check(14, "有已排未核销的课时不得转化", cvPending.status === 400, `实际 ${cvPending.status}`);
 
   await cleanupConvert();
+
+  // ── 阶段 15：线上/线下（线上不占教室，但仍查老师/学生冲突）────────────────
+  console.log("\n阶段 15 — 线上/线下");
+  const dmPhone = "6479998821";
+  const cleanupDelivery = async () => {
+    const cls = await prisma.groupClass.findMany({ where: { name: { startsWith: "探测班·地点" } } });
+    for (const c of cls) {
+      await prisma.groupSessionAttendance.deleteMany({ where: { session: { classId: c.id } } });
+      await prisma.groupSession.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClassMember.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClass.delete({ where: { id: c.id } });
+    }
+    const st = await prisma.student.findFirst({ where: { phone: dmPhone } });
+    if (st) {
+      await prisma.scheduledLesson.deleteMany({ where: { studentId: st.id } });
+      await prisma.ledgerEntry.deleteMany({ where: { studentId: st.id } });
+      await prisma.coursePackage.deleteMany({ where: { studentId: st.id } });
+      await prisma.student.delete({ where: { id: st.id } });
+    }
+    await prisma.userRole.deleteMany({ where: { user: { phone: "6470000098" } } });
+    await prisma.userCampus.deleteMany({ where: { user: { phone: "6470000098" } } });
+    await prisma.user.deleteMany({ where: { phone: "6470000098" } });
+  };
+  await cleanupDelivery();
+
+  const dmStudent = await prisma.student.create({
+    data: { name: "探测·地点", phone: dmPhone, campusId: "campus-rh", gradeId: fx.grade.id },
+  });
+  const dmPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: dmStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+      totalHours: 40, pricePerHour: 100, totalAmount: 4000, remainingHours: 40,
+      status: "ACTIVE", classType: "ONE_ON_ONE", createdById: fx.admin.id,
+    },
+  });
+  const dmTeacher2 = await prisma.user.create({
+    data: {
+      name: "Probe RH Teacher3", phone: "6470000098", passwordHash: await bcrypt.hash("teacher123", 12),
+      roles: { create: [{ role: "TEACHER" }] }, campuses: { create: [{ campusId: "campus-rh" }] },
+    },
+  });
+  const dmAt = (days, hours = 2) => {
+    const st = new Date(fx.base.getTime() + days * 86400000);
+    return { startTime: st.toISOString(), endTime: new Date(st.getTime() + hours * 3600000).toISOString() };
+  };
+
+  // 线下课必须选教室
+  const dmNoRoom = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    deliveryMode: "ONSITE", ...dmAt(400),
+  });
+  check(15, "线下课必须选择教室", dmNoRoom.status === 400, `实际 ${dmNoRoom.status}：${dmNoRoom.body?.error}`);
+
+  // 线上课不用教室
+  const dmOnline = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    deliveryMode: "ONLINE", ...dmAt(400),
+  });
+  const dmOnlineRow = dmOnline.status === 201
+    ? await prisma.scheduledLesson.findUnique({ where: { id: dmOnline.body.id } }) : null;
+  check(15, "线上课无需教室，且落库时教室为空",
+    dmOnline.status === 201 && dmOnlineRow?.classroomId === null && dmOnlineRow?.deliveryMode === "ONLINE",
+    `HTTP ${dmOnline.status}，教室 ${dmOnlineRow?.classroomId}，形式 ${dmOnlineRow?.deliveryMode}`);
+
+  // 即便传了教室，线上课也不许占：服务端抹掉
+  const dmOnlineWithRoom = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: dmTeacher2.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    classroomId: fx.rhRoom.id, deliveryMode: "ONLINE", ...dmAt(401),
+  });
+  const dmWRRow = dmOnlineWithRoom.status === 201
+    ? await prisma.scheduledLesson.findUnique({ where: { id: dmOnlineWithRoom.body.id } }) : null;
+  check(15, "线上课即使传了教室也会被抹掉",
+    dmOnlineWithRoom.status === 201 && dmWRRow?.classroomId === null,
+    `HTTP ${dmOnlineWithRoom.status}，教室 ${dmWRRow?.classroomId}`);
+
+  // 同一教室同一时段：先占一节线下
+  const dmOnsite = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    classroomId: fx.rhRoom.id, deliveryMode: "ONSITE", ...dmAt(402),
+  });
+  check(15, "线下课可正常排", dmOnsite.status === 201, `实际 ${dmOnsite.status}：${dmOnsite.body?.error}`);
+
+  // 同时段另一老师另一学生的线上课不受该教室占用影响
+  const dmParallel = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: dmTeacher2.id, studentId: fx.student.id, packageId: fx.active.id,
+    deliveryMode: "ONLINE", ...dmAt(402),
+  });
+  check(15, "线上课不占教室，可与同教室的线下课并行",
+    dmParallel.status === 201, `实际 ${dmParallel.status}：${dmParallel.body?.error}`);
+  if (dmParallel.status === 201) await prisma.scheduledLesson.delete({ where: { id: dmParallel.body.id } });
+
+  // 但同一老师同一时段仍然冲突 —— 线上不是免检通道
+  const dmTeacherClash = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
+    deliveryMode: "ONLINE", ...dmAt(402),
+  });
+  check(15, "线上课仍受老师时段冲突约束", dmTeacherClash.status === 409, `实际 ${dmTeacherClash.status}`);
+
+  // 同一学生同一时段也仍然冲突
+  const dmStudentClash = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: dmTeacher2.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    deliveryMode: "ONLINE", ...dmAt(402),
+  });
+  check(15, "线上课仍受学生时段冲突约束", dmStudentClash.status === 409, `实际 ${dmStudentClash.status}`);
+
+  // 改期时把线下改成线上，教室要被清空
+  const dmToOnline = await rhPrincipal.req("PUT", `/api/schedule/${dmOnsite.body.id}`, {
+    deliveryMode: "ONLINE", ...dmAt(403),
+  });
+  const dmMovedRow = await prisma.scheduledLesson.findUnique({ where: { id: dmOnsite.body.id } });
+  check(15, "改期可从线下改线上，教室被清空",
+    dmToOnline.status === 200 && dmMovedRow.classroomId === null && dmMovedRow.deliveryMode === "ONLINE",
+    `HTTP ${dmToOnline.status}，教室 ${dmMovedRow.classroomId}，形式 ${dmMovedRow.deliveryMode}`);
+
+  // 改回线下但不给教室 → 拒绝（不能留下没有地点的线下课）
+  const dmBackNoRoom = await rhPrincipal.req("PUT", `/api/schedule/${dmOnsite.body.id}`, {
+    deliveryMode: "ONSITE", ...dmAt(404),
+  });
+  check(15, "改回线下必须重新指定教室", dmBackNoRoom.status === 400, `实际 ${dmBackNoRoom.status}`);
+
+  // 老师在带班课时，不能再被排一对一（两张课表要互相看见）
+  const dmClass = await prisma.groupClass.create({
+    data: {
+      name: "探测班·地点", campusId: "campus-rh", subjectId: fx.subject.id,
+      teacherId: fx.rhTeacher.id, createdById: fx.admin.id, status: "ONGOING",
+    },
+  });
+  const dmSessionAt = dmAt(410);
+  await prisma.groupSession.create({
+    data: {
+      classId: dmClass.id, teacherId: fx.rhTeacher.id, classroomId: fx.rhRoom.id,
+      startTime: new Date(dmSessionAt.startTime), endTime: new Date(dmSessionAt.endTime),
+    },
+  });
+  const dmCrossTeacher = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: fx.rhTeacher.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    deliveryMode: "ONLINE", ...dmSessionAt,
+  });
+  check(15, "老师在带班课时不得再被排一对一",
+    dmCrossTeacher.status === 409, `实际 ${dmCrossTeacher.status}：${dmCrossTeacher.body?.error}`);
+
+  // 学生在班课里，同时段也不能再排一对一
+  await prisma.groupClassMember.create({
+    data: { classId: dmClass.id, studentId: dmStudent.id, packageId: dmPkg.id },
+  });
+  const dmCrossStudent = await rhPrincipal.req("POST", "/api/schedule", {
+    teacherId: dmTeacher2.id, studentId: dmStudent.id, packageId: dmPkg.id,
+    deliveryMode: "ONLINE", ...dmSessionAt,
+  });
+  check(15, "学生在班课上课时不得再被排一对一",
+    dmCrossStudent.status === 409, `实际 ${dmCrossStudent.status}：${dmCrossStudent.body?.error}`);
+
+  await cleanupDelivery();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -1490,7 +1643,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

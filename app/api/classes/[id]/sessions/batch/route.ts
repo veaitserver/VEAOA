@@ -7,7 +7,7 @@ import { ScheduleError } from "@/lib/scheduling";
 import { activeMembers, assertAllMembersHaveHours, assertGroupNoConflict } from "@/lib/groupClass";
 import { torontoWallTimeToUtc } from "@/lib/datetime";
 import { expandRecurrence, MAX_OCCURRENCES, type Frequency } from "@/lib/recurrence";
-import { AttendanceStatus, GroupClassStatus, GroupSessionStatus } from "@/lib/enums";
+import { AttendanceStatus, GroupClassStatus, GroupSessionStatus, DeliveryMode } from "@/lib/enums";
 import { z } from "zod";
 
 const schema = z.object({
@@ -22,7 +22,8 @@ const schema = z.object({
     z.object({ type: z.literal("count"), value: z.number().int().positive().max(MAX_OCCURRENCES) }),
   ]),
   teacherId: z.string().min(1).optional(),
-  classroomId: z.string().min(1).optional(),
+  classroomId: z.string().min(1).nullish(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).optional(),
   // 预检：只算不建，让教务先看清哪几次排不了、改完再提交。
   dryRun: z.boolean().optional(),
 });
@@ -59,9 +60,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const d = parsed.data;
 
   const teacherId = d.teacherId ?? cls.teacherId;
-  const classroomId = d.classroomId ?? cls.classroomId;
+  const deliveryMode = d.deliveryMode ?? cls.deliveryMode;
+  const classroomId = deliveryMode === DeliveryMode.ONLINE ? null : (d.classroomId ?? cls.classroomId);
   if (!teacherId) return NextResponse.json({ error: "请指定老师（班级未设默认老师）" }, { status: 400 });
-  if (!classroomId) return NextResponse.json({ error: "请指定教室（班级未设默认教室）" }, { status: 400 });
+  if (deliveryMode === DeliveryMode.ONSITE && !classroomId) {
+    return NextResponse.json({ error: "请指定教室（班级未设默认教室）" }, { status: 400 });
+  }
 
   // 老师/教室校区校验一次即可，整批共用。
   const teacher = await prisma.user.findUnique({
@@ -72,9 +76,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       || !teacher.campuses.some((c) => c.campusId === cls.campusId)) {
     return NextResponse.json({ error: "老师不是该校区的在职老师" }, { status: 400 });
   }
-  const room = await prisma.classroom.findUnique({ where: { id: classroomId }, select: { campusId: true } });
-  if (!room || room.campusId !== cls.campusId) {
-    return NextResponse.json({ error: "教室不属于该校区" }, { status: 400 });
+  if (classroomId) {
+    const room = await prisma.classroom.findUnique({ where: { id: classroomId }, select: { campusId: true } });
+    if (!room || room.campusId !== cls.campusId) {
+      return NextResponse.json({ error: "教室不属于该校区" }, { status: 400 });
+    }
   }
 
   const dates = expandRecurrence({
@@ -131,7 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         const s = await tx.groupSession.create({
           data: {
-            classId: id, teacherId, classroomId, startTime, endTime,
+            classId: id, teacherId, classroomId, deliveryMode, startTime, endTime,
             status: GroupSessionStatus.SCHEDULED,
             attendances: {
               create: fresh.map((m) => ({

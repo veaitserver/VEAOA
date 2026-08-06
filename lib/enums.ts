@@ -192,3 +192,16 @@ export const LessonType = {
   GROUP: "GROUP",
 } as const;
 export type LessonType = (typeof LessonType)[keyof typeof LessonType];
+
+// 授课地点形式。线上课不占用实体教室，因此 classroomId 为空，
+// 也不参与教室冲突检查（老师/学生冲突照常校验）。
+export const DeliveryMode = {
+  ONSITE: "ONSITE", // 线下：必须选教室
+  ONLINE: "ONLINE", // 线上：不选教室
+} as const;
+export type DeliveryMode = (typeof DeliveryMode)[keyof typeof DeliveryMode];
+
+export const DELIVERY_MODE_LABELS: Record<string, string> = {
+  ONSITE: "线下",
+  ONLINE: "线上",
+};

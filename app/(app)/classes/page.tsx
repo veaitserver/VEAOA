@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { GROUP_CLASS_STATUS_LABELS } from "@/lib/enums";
 import Pagination from "@/components/Pagination";
+import LocationTag from "@/components/LocationTag";
 
 type GroupClass = {
   id: string; name: string; status: string; capacity: number | null;
@@ -13,6 +14,7 @@ type GroupClass = {
   grade: { name: string } | null;
   teacher: { id: string; name: string } | null;
   classroom: { name: string } | null;
+  deliveryMode: string;
   members: { id: string }[];
   _count: { sessions: number };
 };
@@ -50,7 +52,7 @@ export default function ClassesPage() {
   const [teachers, setTeachers] = useState<Opt[]>([]);
   const [rooms, setRooms] = useState<{ id: string; name: string; campus: { name: string } }[]>([]);
   const [form, setForm] = useState({
-    name: "", campusId: "", subjectId: "", gradeId: "", teacherId: "", classroomId: "", capacity: "",
+    name: "", campusId: "", subjectId: "", gradeId: "", teacherId: "", classroomId: "", capacity: "", deliveryMode: "ONSITE",
   });
   const [error, setError] = useState("");
 
@@ -106,13 +108,14 @@ export default function ClassesPage() {
         subjectId: form.subjectId,
         gradeId: form.gradeId || null,
         teacherId: form.teacherId || null,
-        classroomId: form.classroomId || null,
+        classroomId: form.deliveryMode === "ONLINE" ? null : (form.classroomId || null),
+        deliveryMode: form.deliveryMode,
         capacity: form.capacity ? Number(form.capacity) : null,
       }),
     });
     if (res.ok) {
       setShowForm(false);
-      setForm({ name: "", campusId: "", subjectId: "", gradeId: "", teacherId: "", classroomId: "", capacity: "" });
+      setForm({ name: "", campusId: "", subjectId: "", gradeId: "", teacherId: "", classroomId: "", capacity: "", deliveryMode: "ONSITE" });
       load();
     } else setError((await res.json()).error ?? "创建失败");
   }
@@ -170,12 +173,23 @@ export default function ClassesPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">默认教室</label>
-              <select value={form.classroomId} onChange={(e) => setForm({ ...form, classroomId: e.target.value })} className={inputCls}>
-                <option value="">排课时再定</option>
-                {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}（{r.campus.name}）</option>)}
+              <label className="block text-xs font-medium text-slate-600 mb-1">默认上课形式</label>
+              <select value={form.deliveryMode}
+                onChange={(e) => setForm({ ...form, deliveryMode: e.target.value, classroomId: e.target.value === "ONLINE" ? "" : form.classroomId })}
+                className={inputCls}>
+                <option value="ONSITE">线下</option>
+                <option value="ONLINE">线上</option>
               </select>
             </div>
+            {form.deliveryMode === "ONSITE" && (
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">默认教室</label>
+                <select value={form.classroomId} onChange={(e) => setForm({ ...form, classroomId: e.target.value })} className={inputCls}>
+                  <option value="">排课时再定</option>
+                  {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}（{r.campus.name}）</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">容量上限</label>
               <input type="number" min="1" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })}
@@ -246,7 +260,7 @@ export default function ClassesPage() {
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-500">
                   {c.teacher?.name ?? "—"}
-                  <div className="text-xs text-slate-400">{c.classroom?.name ?? "—"}</div>
+                  <div className="text-xs text-slate-400"><LocationTag deliveryMode={c.deliveryMode} classroomName={c.classroom?.name} /></div>
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-800 tabular-nums">
                   {c.members.length}{c.capacity ? ` / ${c.capacity}` : ""}

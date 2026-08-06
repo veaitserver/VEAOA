@@ -3,17 +3,19 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { campusScope, canSchedule, type SessionUser } from "@/lib/permissions";
 import { lessonHours } from "@/lib/hours";
-import { validateTargets, assertInventory, assertNoConflict, ScheduleError } from "@/lib/scheduling";
+import { validateTargets, assertInventory, assertNoConflict, normalizeLocation, ScheduleError } from "@/lib/scheduling";
 import { z } from "zod";
 
 const createSchema = z.object({
   teacherId: z.string().min(1),
   studentId: z.string().min(1),
   packageId: z.string().min(1),
-  classroomId: z.string().min(1),
+  // 线上课不选教室，故可空；由 normalizeLocation 按形式裁定。
+  classroomId: z.string().min(1).nullish(),
   startTime: z.string(),
   endTime: z.string(),
   lessonType: z.enum(["ONE_ON_ONE", "GROUP"]).default("ONE_ON_ONE"),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).default("ONSITE"),
 }).refine(
   (d) => {
     const s = new Date(d.startTime).getTime();
@@ -69,7 +71,8 @@ export async function GET(req: Request) {
       studentId: l.studentId,
       studentName: l.student.name,
       classroomId: l.classroomId,
-      classroomName: l.classroom.name,
+      classroomName: l.classroom?.name ?? null,
+      deliveryMode: l.deliveryMode,
       packageId: l.packageId,
       subjectName: l.package.subject.name,
       lessonType: l.lessonType,
@@ -114,7 +117,8 @@ export async function GET(req: Request) {
       studentId: "",
       studentName: s.class.name,
       classroomId: s.classroomId,
-      classroomName: s.classroom.name,
+      classroomName: s.classroom?.name ?? null,
+      deliveryMode: s.deliveryMode,
       packageId: "",
       subjectName: s.class.subject.name,
       lessonType: "GROUP",
@@ -147,9 +151,13 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
-  const { teacherId, studentId, packageId, classroomId, startTime, endTime, lessonType } = parsed.data;
+  const { teacherId, studentId, packageId, startTime, endTime, lessonType } = parsed.data;
 
   try {
+    // 线下必须有教室、线上一律清空，四个排课入口共用同一裁定。
+    const loc = normalizeLocation(parsed.data.deliveryMode, parsed.data.classroomId);
+    const classroomId = loc.classroomId;
+
     // 校区/老师资格校验（与改期共用，见 lib/scheduling）。
     await validateTargets(sessionUser, { studentId, classroomId, teacherId });
 
@@ -174,7 +182,11 @@ export async function POST(req: Request) {
       await assertInventory(tx, { pkg, durationHours });
 
       const created = await tx.scheduledLesson.create({
-        data: { teacherId, studentId, packageId, classroomId, startTime: new Date(startTime), endTime: new Date(endTime), lessonType },
+        data: {
+          teacherId, studentId, packageId, classroomId, lessonType,
+          deliveryMode: loc.deliveryMode,
+          startTime: new Date(startTime), endTime: new Date(endTime),
+        },
         include: {
           teacher: { select: { name: true } },
           student: { select: { name: true } },

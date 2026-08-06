@@ -7,6 +7,7 @@ import { isDeductionLocked } from "@/lib/lock";
 import { ATTENDANCE_LABELS } from "@/lib/enums";
 import { shouldDeductHours } from "@/lib/attendance";
 import Pagination from "@/components/Pagination";
+import LocationTag from "@/components/LocationTag";
 
 const ATTENDANCE_COLORS: Record<string, string> = {
   PRESENT: "bg-green-100 text-green-700",
@@ -19,7 +20,8 @@ type Lesson = {
   attendance?: string | null; attendanceNote?: string | null;
   teacher: { id: string; name: string };
   student: { id: string; name: string };
-  classroom: { name: string };
+  classroom: { name: string } | null;
+  deliveryMode: string;
   package: { subject: { name: string }; id: string };
   log?: {
     id: string; notes: string; submittedAt: string;
@@ -185,7 +187,7 @@ export default function LessonsPage() {
                   <td className="px-4 py-3 text-sm text-slate-500">{l.teacher.name}</td>
                   <td className="px-4 py-3 text-sm text-slate-500">
                     {l.package.subject.name} · {durationH.toFixed(1)}h
-                    <div className="text-xs text-slate-400">{l.classroom.name}</div>
+                    <div className="text-xs text-slate-400"><LocationTag deliveryMode={l.deliveryMode} classroomName={l.classroom?.name} /></div>
                   </td>
                   <td className="px-4 py-3">
                     {l.attendance ? (

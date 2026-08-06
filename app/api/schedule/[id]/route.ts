@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canSchedule, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { lessonHours } from "@/lib/hours";
-import { validateTargets, assertInventory, assertNoConflict, ScheduleError } from "@/lib/scheduling";
+import { validateTargets, assertInventory, assertNoConflict, normalizeLocation, ScheduleError } from "@/lib/scheduling";
 import { AttendanceStatus } from "@/lib/enums";
 import { z } from "zod";
 
@@ -11,7 +11,9 @@ const updateSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
   teacherId: z.string().min(1).optional(),
-  classroomId: z.string().min(1).optional(),
+  // 线上课没有教室；不传则沿用原值。
+  classroomId: z.string().min(1).nullish(),
+  deliveryMode: z.enum(["ONSITE", "ONLINE"]).optional(),
 }).refine(
   (d) => {
     const s = new Date(d.startTime).getTime();
@@ -59,11 +61,17 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const teacherId = parsed.data.teacherId ?? lesson.teacherId;
-  const classroomId = parsed.data.classroomId ?? lesson.classroomId;
   const startTime = new Date(parsed.data.startTime);
   const endTime = new Date(parsed.data.endTime);
 
   try {
+    // 改期时可以顺带把线下课改成线上（或反过来）；未指定则沿用原样。
+    const loc = normalizeLocation(
+      parsed.data.deliveryMode ?? lesson.deliveryMode,
+      parsed.data.classroomId === undefined ? lesson.classroomId : parsed.data.classroomId,
+    );
+    const classroomId = loc.classroomId;
+
     await validateTargets(sessionUser, { studentId: lesson.studentId, classroomId, teacherId });
 
     const durationHours = lessonHours(startTime, endTime);
@@ -76,6 +84,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         where: { id },
         data: {
           startTime, endTime, teacherId, classroomId,
+          deliveryMode: loc.deliveryMode,
           // 改期后是一节全新的课：清掉原来的请假/旷课标记。
           attendance: null, attendanceNote: null, attendanceById: null, attendanceAt: null,
         },
