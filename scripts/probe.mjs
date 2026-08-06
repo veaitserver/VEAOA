@@ -1432,17 +1432,31 @@ async function run() {
     newActive.status === "ACTIVE" && balAfter === 0,
     `新包 ${newActive.status}，余额 $${balAfter}（应 $0）`);
 
-  // 转成更便宜的：无需补款，直接生效，多出的留在账户余额
+  // 新包价值低于抵扣：拒绝，提示补课时。系统不留悬空余额。
   const cvPkgB = await mkCvPkg(100, 10); // $1000
-  const cvCheap = await smMkm.req("POST", `/api/packages/${cvPkgB.id}/convert`, {
+  const cheapBody = {
     subjectId: fx.subject.id, gradeId: fx.grade.id, classType: "GROUP",
     totalHours: 10, pricePerHour: 60, totalAmount: 600,
+  };
+  const cvCheap = await smMkm.req("POST", `/api/packages/${cvPkgB.id}/convert`, cheapBody);
+  const stillB = await prisma.coursePackage.findUnique({ where: { id: cvPkgB.id } });
+  check(14, "新包价值低于抵扣一律拒绝，并提示补课时",
+    cvCheap.status === 400 && /增加课时/.test(cvCheap.body?.error ?? "") && stillB.status === "ACTIVE",
+    `实际 ${cvCheap.status}：${cvCheap.body?.error}；原包 ${stillB.status}`);
+
+  // 试算同样拒绝，界面在提交前就能看到提示
+  const cvCheapDry = await smMkm.req("POST", `/api/packages/${cvPkgB.id}/convert`, { ...cheapBody, dryRun: true });
+  check(14, "低于抵扣的转化试算也被拒", cvCheapDry.status === 400, `实际 ${cvCheapDry.status}`);
+
+  // 加够课时正好抵平：无需补款直接生效，账户不留余额
+  const cvEven = await smMkm.req("POST", `/api/packages/${cvPkgB.id}/convert`, {
+    ...cheapBody, totalHours: 20, pricePerHour: 50, totalAmount: 1000,
   });
-  const cheapPkg = await prisma.coursePackage.findUnique({ where: { id: cvCheap.body.package.id } });
-  const balCheap = await cvBalance();
-  check(14, "转成更便宜的直接生效，多出的留作账户余额",
-    cvCheap.status === 201 && cheapPkg.status === "ACTIVE" && cvCheap.body.surplus === 400 && balCheap === 400,
-    `新包 ${cheapPkg.status}，多出 $${cvCheap.body?.surplus}，余额 $${balCheap}（应 $400）`);
+  const evenPkg = await prisma.coursePackage.findUnique({ where: { id: cvEven.body?.package?.id ?? "none" } });
+  const balEven = await cvBalance();
+  check(14, "抵平后直接生效且账户余额归零",
+    cvEven.status === 201 && cvEven.body.topUp === 0 && evenPkg?.status === "ACTIVE" && balEven === 0,
+    `新包 ${evenPkg?.status}，补款 $${cvEven.body?.topUp}，余额 $${balEven}（应 $0）`);
 
   // 有已排未核销的课时不能转化
   const cvPkgC = await mkCvPkg(80, 10);

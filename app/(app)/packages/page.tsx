@@ -22,7 +22,7 @@ const SIGNING_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效",
+  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效", CONVERTED: "已转化",
 };
 const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",

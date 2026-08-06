@@ -13,6 +13,11 @@ class ConvertError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+/** 错误文案里的金额，加币两位小数。 */
+function formatShort(amount: number): string {
+  return `$${roundMoney(amount).toFixed(2)}`;
+}
+
 const schema = z.object({
   subjectId: z.string().min(1),
   gradeId: z.string().min(1),
@@ -34,8 +39,9 @@ const schema = z.object({
  *   抵扣 = 原包剩余课时 × 原单价
  *   补款 = 新包总价 − 抵扣
  *
- * 补款 > 0 时新包为「待财务确认」，财务收到钱才生效；补款 ≤ 0（转成更便宜的）
- * 时新包直接生效，多出来的价值留在学生账户余额里，可用于以后抵扣。
+ * 补款 > 0 时新包为「待财务确认」，财务收到钱才生效；补款 = 0（正好抵平）时直接生效。
+ * 补款 < 0 一律拒绝：转成更便宜的，办理人多加课时把金额补齐即可，系统不做
+ * 「多出来的挂账户余额」，免得留下永远对不上的悬空余额。
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -93,6 +99,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const newTotal = roundMoney(d.totalAmount);
   const topUp = roundMoney(newTotal - creditAmount);
 
+  // 新包价值不得低于抵扣：转成更便宜的就多给课时把金额补齐，
+  // 系统不做「多退的钱挂账户」那套，账目更简单，也不会留下悬空余额。
+  if (topUp < 0) {
+    const shortHours = Math.ceil((creditAmount - newTotal) / d.pricePerHour);
+    return NextResponse.json({
+      error: `新课包价值 ${formatShort(newTotal)} 低于原包抵扣 ${formatShort(creditAmount)}，`
+        + `请增加课时（按 ${formatShort(d.pricePerHour)}/h 约需再加 ${shortHours}h）或调整单价，使其不低于抵扣金额。`,
+    }, { status: 400 });
+  }
+
   if (d.dryRun) {
     return NextResponse.json({
       dryRun: true,
@@ -100,7 +116,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       creditAmount,
       newTotal,
       topUp,
-      surplus: topUp < 0 ? roundMoney(-topUp) : 0,
       needsFinance: topUp > 0,
     });
   }
@@ -175,7 +190,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       package: created,
       creditHours, creditAmount, topUp,
-      surplus: topUp < 0 ? roundMoney(-topUp) : 0,
       needsFinance: topUp > 0,
     }, { status: 201 });
   } catch (e) {

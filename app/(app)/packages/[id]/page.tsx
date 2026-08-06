@@ -32,12 +32,13 @@ type LessonRef = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效",
+  PENDING_APPROVAL: "待校长确认", PENDING_FINANCE: "待财务确认", ACTIVE: "已生效", CONVERTED: "已转化",
 };
 const STATUS_COLORS: Record<string, string> = {
   PENDING_APPROVAL: "bg-yellow-100 text-yellow-700",
   PENDING_FINANCE: "bg-orange-100 text-orange-700",
   ACTIVE: "bg-green-100 text-green-700",
+  CONVERTED: "bg-slate-100 text-slate-500",
 };
 
 export default function PackageDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -50,7 +51,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [showConvert, setShowConvert] = useState(false);
   const [convOpts, setConvOpts] = useState<{ subjects: { id: string; name: string }[]; grades: { id: string; name: string }[] }>({ subjects: [], grades: [] });
   const [convForm, setConvForm] = useState({ subjectId: "", gradeId: "", classType: "ONE_ON_ONE", totalHours: "", pricePerHour: "" });
-  const [convPreview, setConvPreview] = useState<{ creditHours: number; creditAmount: number; newTotal: number; topUp: number; surplus: number; needsFinance: boolean } | null>(null);
+  const [convPreview, setConvPreview] = useState<{ creditHours: number; creditAmount: number; newTotal: number; topUp: number; needsFinance: boolean } | null>(null);
   const [convMsg, setConvMsg] = useState("");
   const [showRefund, setShowRefund] = useState(false);
   const [refundHours, setRefundHours] = useState("");
@@ -359,14 +360,15 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
               <div className="flex justify-between"><span className="text-slate-500">原包抵扣（{convPreview.creditHours}h）</span><span className="font-medium text-green-700">+{formatMoney(convPreview.creditAmount)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">新课包总价</span><span className="font-medium text-slate-800">{formatMoney(convPreview.newTotal)}</span></div>
               <div className="flex justify-between border-t border-slate-200 pt-1.5">
-                {convPreview.topUp > 0
-                  ? <><span className="text-slate-700 font-medium">家长需补款</span><span className="font-bold text-red-600">{formatMoney(convPreview.topUp)}</span></>
-                  : <><span className="text-slate-700 font-medium">多出（留在学生账户余额）</span><span className="font-bold text-green-700">{formatMoney(convPreview.surplus)}</span></>}
+                <span className="text-slate-700 font-medium">{convPreview.topUp > 0 ? "家长需补款" : "无需补款（正好抵平）"}</span>
+                <span className={`font-bold ${convPreview.topUp > 0 ? "text-red-600" : "text-green-700"}`}>
+                  {formatMoney(convPreview.topUp)}
+                </span>
               </div>
               <p className="text-xs text-slate-500 pt-1">
                 {convPreview.needsFinance
                   ? "新课包将置为「待财务确认」，财务收到补款后正式生效。"
-                  : "无需补款，新课包直接生效；多出的价值留在账户，可用于以后抵扣。"}
+                  : "抵扣正好覆盖新课包，直接生效。"}
               </p>
             </div>
           )}
