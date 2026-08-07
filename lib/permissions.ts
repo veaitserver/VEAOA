@@ -282,6 +282,14 @@ export function canViewTeacherReport(user: SessionUser | null | undefined): bool
   return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+/**
+ * 剩余课时负债报表：这是财务口径的钱（预收未消耗），
+ * 只给财务/校长/超管看。销售、学管看到全校区负债没有意义，也涉及别人的业绩。
+ */
+export function canViewLiabilityReport(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.FINANCE, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
 // 营销活动由校区校长管理（导入线索的正是校长），超管全权。
 export function canManageCampaigns(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.PRINCIPAL, Role.SUPER_ADMIN);

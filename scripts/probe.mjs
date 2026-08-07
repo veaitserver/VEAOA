@@ -1628,6 +1628,120 @@ async function run() {
     dmCrossStudent.status === 409, `实际 ${dmCrossStudent.status}：${dmCrossStudent.body?.error}`);
 
   await cleanupDelivery();
+
+  // ── 阶段 16：剩余课时负债报表（口径：未核销的都算）────────────────────────
+  console.log("\n阶段 16 — 剩余课时负债报表");
+  const lbPhone = "6479998831";
+  const cleanupLiab = async () => {
+    const st = await prisma.student.findFirst({ where: { phone: lbPhone } });
+    if (!st) return;
+    const logs = await prisma.lessonLog.findMany({ where: { lesson: { studentId: st.id } } });
+    for (const lg of logs) await prisma.courseDeduction.deleteMany({ where: { logId: lg.id } });
+    await prisma.lessonLog.deleteMany({ where: { lesson: { studentId: st.id } } });
+    await prisma.courseDeduction.deleteMany({ where: { package: { studentId: st.id } } });
+    await prisma.scheduledLesson.deleteMany({ where: { studentId: st.id } });
+    await prisma.ledgerEntry.deleteMany({ where: { studentId: st.id } });
+    await prisma.coursePackage.deleteMany({ where: { studentId: st.id } });
+    await prisma.student.delete({ where: { id: st.id } });
+  };
+  await cleanupLiab();
+
+  // 销售/学管无权看负债（这是财务口径的钱，且跨全校区）
+  const lbBySales = await mkmSales.req("GET", "/api/reports/liability");
+  check(16, "销售不得查看负债报表", blocked(lbBySales), `实际 ${lbBySales.status}`);
+
+  const lbBase = await finance.req("GET", "/api/reports/liability");
+  check(16, "财务可查看负债报表", lbBase.status === 200, `实际 ${lbBase.status}`);
+  const baseAmount = lbBase.body?.totalAmount ?? 0;
+
+  const lbStudent = await prisma.student.create({
+    data: { name: "探测·负债", phone: lbPhone, campusId: "campus-rh", gradeId: fx.grade.id },
+  });
+  const mkLbPkg = (status, remaining, price = 100, total = 20) =>
+    prisma.coursePackage.create({
+      data: {
+        studentId: lbStudent.id, gradeId: fx.grade.id, subjectId: fx.subject.id,
+        totalHours: total, pricePerHour: price, totalAmount: total * price,
+        remainingHours: remaining, status, classType: "ONE_ON_ONE", createdById: fx.admin.id,
+      },
+    });
+
+  // 生效课包 10h × $100 = $1000 计入负债
+  const lbActive = await mkLbPkg("ACTIVE", 10);
+  // 待财务确认的不计（钱还没确认到账）
+  await mkLbPkg("PENDING_FINANCE", 20);
+  // 待校长确认的也不计
+  await mkLbPkg("PENDING_APPROVAL", 20);
+  // 已耗尽的不计（剩余 0）
+  await mkLbPkg("ACTIVE", 0);
+
+  const lbAfter = await finance.req("GET", "/api/reports/liability");
+  check(16, "负债 = 已生效课包剩余课时 × 单价，只算 ACTIVE",
+    Math.abs((lbAfter.body.totalAmount - baseAmount) - 1000) < 0.01,
+    `增量 ${(lbAfter.body.totalAmount - baseAmount).toFixed(2)}（应 $1000）`);
+
+  const lbRow = lbAfter.body.rows.find((r) => r.packageId === lbActive.id);
+  check(16, "明细含该课包且金额正确",
+    lbRow && lbRow.remainingHours === 10 && lbRow.amount === 1000 && lbRow.pendingHours === 0,
+    `剩余 ${lbRow?.remainingHours}h，金额 ${lbRow?.amount}，待上 ${lbRow?.pendingHours}h`);
+
+  // 已排未核销：负债不变（未核销的都算），但要拆出「已排待上」
+  const lbSlot = new Date(fx.base.getTime() + 500 * 86400000);
+  await prisma.scheduledLesson.create({
+    data: {
+      teacherId: fx.rhTeacher.id, studentId: lbStudent.id, packageId: lbActive.id,
+      classroomId: fx.rhRoom.id, startTime: lbSlot, endTime: new Date(lbSlot.getTime() + 2 * 3600000),
+    },
+  });
+  const lbSched = await finance.req("GET", "/api/reports/liability");
+  const lbRow2 = lbSched.body.rows.find((r) => r.packageId === lbActive.id);
+  check(16, "已排未核销不减少负债，只拆到「已排待上」",
+    Math.abs((lbSched.body.totalAmount - baseAmount) - 1000) < 0.01 && lbRow2.pendingHours === 2,
+    `增量 ${(lbSched.body.totalAmount - baseAmount).toFixed(2)}，待上 ${lbRow2?.pendingHours}h（应 2h）`);
+
+  // 核销后负债才下降
+  await prisma.$transaction(async (tx) => {
+    const les = await tx.scheduledLesson.findFirst({ where: { packageId: lbActive.id } });
+    const log = await tx.lessonLog.create({
+      data: {
+        lessonId: les.id, teacherId: fx.rhTeacher.id, subjectId: fx.subject.id,
+        notes: "探测·负债核销", confirmedAt: new Date(), confirmedById: fx.admin.id,
+      },
+    });
+    await tx.courseDeduction.create({
+      data: { packageId: lbActive.id, logId: log.id, hoursDeducted: 2 },
+    });
+    await tx.coursePackage.update({
+      where: { id: lbActive.id }, data: { remainingHours: { decrement: 2 } },
+    });
+  });
+  const lbDone = await finance.req("GET", "/api/reports/liability");
+  const lbRow3 = lbDone.body.rows.find((r) => r.packageId === lbActive.id);
+  check(16, "核销后负债按已消耗课时下降",
+    Math.abs((lbDone.body.totalAmount - baseAmount) - 800) < 0.01 && lbRow3.pendingHours === 0,
+    `增量 ${(lbDone.body.totalAmount - baseAmount).toFixed(2)}（应 $800），待上 ${lbRow3?.pendingHours}h`);
+
+  // 校长只看本校区：Markham 校长看不到 RH 的这笔
+  const lbMkmPrincipal = new Client("Markham 校长");
+  await lbMkmPrincipal.login("6470000003", "principal123");
+  const lbScoped = await lbMkmPrincipal.req("GET", "/api/reports/liability");
+  check(16, "校长的负债报表只含本校区",
+    lbScoped.status === 200
+      && !lbScoped.body.rows.some((r) => r.campusId === "campus-rh")
+      && lbScoped.body.byCampus.every((g) => g.key !== "campus-rh"),
+    `HTTP ${lbScoped.status}，含 RH 明细 ${lbScoped.body?.rows?.some((r) => r.campusId === "campus-rh")}`);
+
+  // 汇总与明细必须自洽，否则表面数字好看、点开对不上
+  const sumRows = lbDone.body.rows.reduce((s, r) => s + r.amount, 0);
+  const sumCampus = lbDone.body.byCampus.reduce((s, g) => s + g.amount, 0);
+  const sumSubject = lbDone.body.bySubject.reduce((s, g) => s + g.amount, 0);
+  check(16, "总额 = 明细之和 = 各维度汇总之和",
+    Math.abs(sumRows - lbDone.body.totalAmount) < 0.05
+      && Math.abs(sumCampus - lbDone.body.totalAmount) < 0.05
+      && Math.abs(sumSubject - lbDone.body.totalAmount) < 0.05,
+    `总额 ${lbDone.body.totalAmount}，明细 ${sumRows.toFixed(2)}，校区 ${sumCampus.toFixed(2)}，科目 ${sumSubject.toFixed(2)}`);
+
+  await cleanupLiab();
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -1643,7 +1757,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

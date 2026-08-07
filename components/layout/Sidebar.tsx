@@ -10,6 +10,7 @@ import {
   canManageUsers,
   canViewPackages,
   canViewSalesReport,
+  canViewLiabilityReport,
   canViewTeacherReport,
   canViewLedger,
   canViewGroupClass,
@@ -50,6 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: "报表系统",
     items: [
+      { href: "/reports/liability", label: "剩余课时负债", icon: "💰", can: canViewLiabilityReport },
       { href: "/reports/sales", label: "销售报表", icon: "📊", can: canViewSalesReport },
       { href: "/reports/teachers", label: "工时报表", icon: "⏱️", can: canViewTeacherReport },
     ],
