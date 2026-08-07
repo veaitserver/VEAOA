@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { canReverseDeduction, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { roundHours } from "@/lib/hours";
 import { isDeductionLocked } from "@/lib/lock";
+import { settledPackageIds } from "@/lib/settlement";
 
 class AlreadyReversed extends Error {}
 
@@ -41,6 +42,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const hoursDeducted = roundHours(Number(active.hoursDeducted));
   const log = lesson.log!;
+
+  // 已结算（已转化 / 已退费打款）的课包不能再把课时加回来 —— 见 settledPackageIds。
+  // 真要更正，得先处理那一步结算，或由财务直接调整课包。
+  const settled = await settledPackageIds(prisma, [lesson.packageId]);
+  if (settled.size) {
+    return NextResponse.json(
+      { error: "该课包已转化或已退费结算，撤销核销会让课时与金额对不上，请联系财务调整课包" },
+      { status: 400 },
+    );
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {

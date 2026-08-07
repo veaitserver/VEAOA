@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canSchedule, type SessionUser } from "@/lib/permissions";
+import { campusScope, canSchedule, canViewSchedule, ownScheduleScope, type SessionUser } from "@/lib/permissions";
 import { lessonHours } from "@/lib/hours";
 import { validateTargets, assertInventory, assertNoConflict, normalizeLocation, ScheduleError } from "@/lib/scheduling";
 import { z } from "zod";
@@ -38,12 +38,19 @@ export async function GET(req: Request) {
   const classroomId = searchParams.get("classroomId");
 
   const sessionUser = session.user as SessionUser;
+  if (!canViewSchedule(sessionUser)) {
+    return NextResponse.json({ error: "无权查看课表" }, { status: 403 });
+  }
+  // 纯老师只看自己的课；这里必须压在 teacherId 之后，否则 ?teacherId= 一改
+  // 就能翻别人的课表。
+  const own = ownScheduleScope(sessionUser);
 
   const where: Record<string, unknown> = {};
   if (start) where.startTime = { gte: new Date(start) };
   if (end) where.endTime = { lte: new Date(end) };
   if (teacherId) where.teacherId = teacherId;
   if (classroomId) where.classroomId = classroomId;
+  if (own) where.teacherId = own.teacherId;
   const scope = campusScope(sessionUser);
   if (scope) where.student = { campusId: scope };
 
@@ -92,6 +99,7 @@ export async function GET(req: Request) {
   if (end) sessionWhere.endTime = { lte: new Date(end) };
   if (teacherId) sessionWhere.teacherId = teacherId;
   if (classroomId) sessionWhere.classroomId = classroomId;
+  if (own) sessionWhere.teacherId = own.teacherId;
   if (scope) sessionWhere.class = { campusId: scope };
 
   const sessions = await prisma.groupSession.findMany({

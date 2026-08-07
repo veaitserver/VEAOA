@@ -412,6 +412,8 @@ async function run() {
 
   // 18. 学生撞课（同校区、不同教室不同老师，只让「学生」这一维冲突）
   const t2 = new Client("RH 老师"); await t2.login("6470000007", "teacher123");
+  // 排课已收归教务/校长（老师只读自己的课表），以下排课类断言用 RH 校长作为操作者。
+  const rhSched = new Client("RH 校长（排课）"); await rhSched.login("6470000008", "principal123");
   const slot = new Date(fx.base.getTime() + 7 * 86400000);
   const first = await prisma.scheduledLesson.create({
     data: {
@@ -427,7 +429,7 @@ async function run() {
       roles: { create: [{ role: "TEACHER" }] }, campuses: { create: [{ campusId: "campus-rh" }] },
     },
   });
-  const clash = await t2.req("POST", "/api/schedule", {
+  const clash = await rhSched.req("POST", "/api/schedule", {
     teacherId: rhTeacher2.id, studentId: fx.student.id, packageId: fx.active.id,
     classroomId: fx.rhRoom2.id,
     startTime: slot.toISOString(), endTime: new Date(slot.getTime() + 3600000).toISOString(),
@@ -458,7 +460,7 @@ async function run() {
     },
   });
   const s2 = new Date(fx.base.getTime() + 21 * 86400000);
-  const over = await t2.req("POST", "/api/schedule", {
+  const over = await rhSched.req("POST", "/api/schedule", {
     teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
     classroomId: fx.rhRoom.id,
     startTime: s2.toISOString(), endTime: new Date(s2.getTime() + 4 * 3600000).toISOString(),
@@ -470,7 +472,7 @@ async function run() {
 
   // 20. 排课必须「结束晚于开始」：负时长课会绕过库存校验，核销时 decrement 负数反给课包加课时
   const negStart = new Date(fx.base.getTime() + 28 * 86400000);
-  const neg = await t2.req("POST", "/api/schedule", {
+  const neg = await rhSched.req("POST", "/api/schedule", {
     teacherId: fx.rhTeacher.id, studentId: fx.student.id, packageId: fx.active.id,
     classroomId: fx.rhRoom.id,
     startTime: negStart.toISOString(), endTime: new Date(negStart.getTime() - 2 * 3600000).toISOString(),
@@ -1742,6 +1744,173 @@ async function run() {
     `总额 ${lbDone.body.totalAmount}，明细 ${sumRows.toFixed(2)}，校区 ${sumCampus.toFixed(2)}，科目 ${sumSubject.toFixed(2)}`);
 
   await cleanupLiab();
+
+  // ── 阶段 17：代码复审修复的回归 ────────────────────────────────────────────
+  console.log("\n阶段 17 — 复审修复");
+  const rvPhone = "6479998841";
+  const cleanupReview = async () => {
+    const cls = await prisma.groupClass.findMany({ where: { name: { startsWith: "探测班·复审" } } });
+    for (const c of cls) {
+      await prisma.courseDeduction.deleteMany({ where: { groupSession: { classId: c.id } } });
+      await prisma.groupSessionAttendance.deleteMany({ where: { session: { classId: c.id } } });
+      await prisma.groupSession.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClassMember.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClass.delete({ where: { id: c.id } });
+    }
+    await prisma.classroom.deleteMany({ where: { name: { startsWith: "探测教室·复审" } } });
+    for (const ph of [rvPhone, rvPhone + "1"]) {
+      const st = await prisma.student.findFirst({ where: { phone: ph } });
+      if (!st) continue;
+      const logs = await prisma.lessonLog.findMany({ where: { lesson: { studentId: st.id } } });
+      for (const lg of logs) await prisma.courseDeduction.deleteMany({ where: { logId: lg.id } });
+      await prisma.lessonLog.deleteMany({ where: { lesson: { studentId: st.id } } });
+      await prisma.courseDeduction.deleteMany({ where: { package: { studentId: st.id } } });
+      await prisma.scheduledLesson.deleteMany({ where: { studentId: st.id } });
+      await prisma.refundRequest.deleteMany({ where: { studentId: st.id } });
+      await prisma.ledgerEntry.deleteMany({ where: { studentId: st.id } });
+      await prisma.coursePackage.deleteMany({ where: { studentId: st.id } });
+      await prisma.student.delete({ where: { id: st.id } });
+    }
+  };
+  await cleanupReview();
+
+  const rvTeacher = new Client("Markham 老师");
+  await rvTeacher.login("6470000002", "teacher123");
+
+  // ① 老师不能排课 / 改期 / 删课，只能看自己的课表
+  const rvPkgAny = await prisma.coursePackage.findFirst({
+    where: { status: "ACTIVE", classType: "ONE_ON_ONE", remainingHours: { gte: 2 }, student: { campusId: "campus-markham" } },
+  });
+  const rvRoom = await prisma.classroom.findFirst({ where: { campusId: "campus-markham" } });
+  const rvSlot = new Date(fx.base.getTime() + 600 * 86400000);
+  const teacherSchedule = await rvTeacher.req("POST", "/api/schedule", {
+    teacherId: mkmTeacherRow.id, studentId: rvPkgAny.studentId, packageId: rvPkgAny.id,
+    classroomId: rvRoom.id, deliveryMode: "ONSITE",
+    startTime: rvSlot.toISOString(), endTime: new Date(rvSlot.getTime() + 2 * 3600000).toISOString(),
+  });
+  check(17, "老师不得排课", blocked(teacherSchedule), `实际 ${teacherSchedule.status}`);
+
+  const rvVictimLesson = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: mkmTeacherRow.id, studentId: rvPkgAny.studentId, packageId: rvPkgAny.id,
+      classroomId: rvRoom.id, startTime: rvSlot, endTime: new Date(rvSlot.getTime() + 2 * 3600000),
+    },
+  });
+  const teacherMove = await rvTeacher.req("PUT", `/api/schedule/${rvVictimLesson.id}`, {
+    startTime: new Date(rvSlot.getTime() + 86400000).toISOString(),
+    endTime: new Date(rvSlot.getTime() + 86400000 + 2 * 3600000).toISOString(),
+  });
+  check(17, "老师不得改期", blocked(teacherMove), `实际 ${teacherMove.status}`);
+
+  const teacherDelete = await rvTeacher.req("DELETE", `/api/schedule/${rvVictimLesson.id}`);
+  const stillThere = await prisma.scheduledLesson.findUnique({ where: { id: rvVictimLesson.id } });
+  check(17, "老师不得删课", blocked(teacherDelete) && !!stillThere,
+    `HTTP ${teacherDelete.status}，课程${stillThere ? "仍在" : "已被删"}`);
+
+  // 老师仍看得到课表，但只有自己的
+  const teacherView = await rvTeacher.req("GET", "/api/schedule");
+  const rvForeign = (teacherView.body ?? []).filter((e) => e.extendedProps?.teacherId !== mkmTeacherRow.id);
+  check(17, "老师能看课表，但只看得到自己的课",
+    teacherView.status === 200 && rvForeign.length === 0,
+    `HTTP ${teacherView.status}，别人的课 ${rvForeign.length} 条`);
+
+  // 即使指定别人的 teacherId 也翻不出来
+  const rhTeacherId = fx.rhTeacher.id;
+  const teacherPeek = await rvTeacher.req("GET", `/api/schedule?teacherId=${rhTeacherId}`);
+  const peeked = (teacherPeek.body ?? []).filter((e) => e.extendedProps?.teacherId === rhTeacherId);
+  check(17, "老师改 teacherId 参数也翻不到别人的课表", peeked.length === 0, `翻到 ${peeked.length} 条`);
+
+  await prisma.scheduledLesson.delete({ where: { id: rvVictimLesson.id } });
+
+  // ② 删教室要连班课一起数
+  const rvNewRoom = await prisma.classroom.create({
+    data: { name: "探测教室·复审", campusId: "campus-markham" },
+  });
+  const rvSubject = await prisma.subject.findFirst({ where: { name: "Math" } });
+  const rvClass = await prisma.groupClass.create({
+    data: {
+      name: "探测班·复审", campusId: "campus-markham", subjectId: rvSubject.id,
+      createdById: fx.admin.id, status: "ONGOING",
+    },
+  });
+  const rvSessAt = new Date(fx.base.getTime() + 610 * 86400000);
+  const rvSess = await prisma.groupSession.create({
+    data: {
+      classId: rvClass.id, teacherId: mkmTeacherRow.id, classroomId: rvNewRoom.id,
+      startTime: rvSessAt, endTime: new Date(rvSessAt.getTime() + 2 * 3600000),
+    },
+  });
+  const delRoom = await admin.req("DELETE", `/api/admin/classrooms/${rvNewRoom.id}`);
+  const sessAfter = await prisma.groupSession.findUnique({ where: { id: rvSess.id } });
+  check(17, "被班课占用的教室不得删除，班课的教室不会被清空",
+    delRoom.status === 400 && sessAfter?.classroomId === rvNewRoom.id,
+    `HTTP ${delRoom.status}：${delRoom.body?.error}；课次教室 ${sessAfter?.classroomId === rvNewRoom.id ? "完好" : "被清空"}`);
+
+  // ③ 班课课包的「已排未核销」要算进可退上限
+  const rvStudent = await prisma.student.create({
+    data: { name: "探测·复审班课生", phone: rvPhone, campusId: "campus-markham", gradeId: fx.grade.id, studentManagerId: "user-sm-mkm" },
+  });
+  const rvGroupPkg = await prisma.coursePackage.create({
+    data: {
+      studentId: rvStudent.id, gradeId: fx.grade.id, subjectId: rvSubject.id, classType: "GROUP",
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10,
+      status: "ACTIVE", createdById: fx.admin.id,
+    },
+  });
+  await prisma.groupClassMember.create({
+    data: { classId: rvClass.id, studentId: rvStudent.id, packageId: rvGroupPkg.id },
+  });
+  await prisma.groupSessionAttendance.create({
+    data: { sessionId: rvSess.id, studentId: rvStudent.id, packageId: rvGroupPkg.id },
+  });
+
+  const rvRefundAll = await smMkm.req("POST", "/api/refunds", { packageId: rvGroupPkg.id, hours: 10 });
+  check(17, "班课已排未核销的课时不得退掉",
+    rvRefundAll.status === 400 && /已排未核销 2h/.test(rvRefundAll.body?.error ?? ""),
+    `HTTP ${rvRefundAll.status}：${rvRefundAll.body?.error}`);
+
+  const rvRefundOk = await smMkm.req("POST", "/api/refunds", { packageId: rvGroupPkg.id, hours: 8 });
+  check(17, "扣掉已排的 2h 后，剩下 8h 可正常退",
+    rvRefundOk.status === 201, `HTTP ${rvRefundOk.status}：${rvRefundOk.body?.error}`);
+
+  // ④ 已结算的课包不得撤销核销
+  const rvStu2 = await prisma.student.create({
+    data: { name: "探测·复审撤销", phone: rvPhone + "1", campusId: "campus-markham", gradeId: fx.grade.id, studentManagerId: "user-sm-mkm" },
+  });
+  const rvPkg2 = await prisma.coursePackage.create({
+    data: {
+      studentId: rvStu2.id, gradeId: fx.grade.id, subjectId: rvSubject.id, classType: "ONE_ON_ONE",
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 8,
+      status: "ACTIVE", createdById: fx.admin.id,
+    },
+  });
+  const rvLesAt = new Date(fx.base.getTime() + 620 * 86400000);
+  const rvLes = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: mkmTeacherRow.id, studentId: rvStu2.id, packageId: rvPkg2.id,
+      classroomId: rvRoom.id, startTime: rvLesAt, endTime: new Date(rvLesAt.getTime() + 2 * 3600000),
+    },
+  });
+  const rvLog = await prisma.lessonLog.create({
+    data: {
+      lessonId: rvLes.id, teacherId: mkmTeacherRow.id, subjectId: rvSubject.id,
+      notes: "探测·复审", confirmedAt: new Date(), confirmedById: fx.admin.id,
+    },
+  });
+  await prisma.courseDeduction.create({ data: { packageId: rvPkg2.id, logId: rvLog.id, hoursDeducted: 2 } });
+
+  const rvConv = await smMkm.req("POST", `/api/packages/${rvPkg2.id}/convert`, {
+    subjectId: rvSubject.id, gradeId: fx.grade.id, classType: "ONE_ON_ONE",
+    totalHours: 12, pricePerHour: 100, totalAmount: 1200,
+  });
+  const rvRev = await finance.req("POST", `/api/lessons/${rvLes.id}/reverse`);
+  const rvPkgAfter = await prisma.coursePackage.findUnique({ where: { id: rvPkg2.id } });
+  check(17, "已转化的课包不得撤销核销（否则课时凭空复活）",
+    rvConv.status === 201 && rvRev.status === 400 && Number(rvPkgAfter.remainingHours) === 0,
+    `转化 ${rvConv.status}，撤销 ${rvRev.status}，原包剩余 ${rvPkgAfter?.remainingHours}h（应 0）`);
+
+  await prisma.coursePackage.deleteMany({ where: { id: rvConv.body?.package?.id } });
+  await cleanupReview();
 }
 
 /**
@@ -1792,7 +1961,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

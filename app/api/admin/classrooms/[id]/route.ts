@@ -33,10 +33,23 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!isSuperAdmin(session.user as SessionUser)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
-  // 已有排课记录的教室不能删，否则会破坏历史课程/核销数据。
-  const lessons = await prisma.scheduledLesson.count({ where: { classroomId: id } });
-  if (lessons > 0) {
-    return NextResponse.json({ error: `该教室已有 ${lessons} 条排课记录，无法删除` }, { status: 400 });
+  // 已被引用的教室不能删，否则会破坏历史课程/核销数据。
+  //
+  // 三张表都要数：classroomId 现在是可空外键（线上课不占教室），外键动作因此
+  // 是 SET NULL 而非 RESTRICT —— 数据库不再兜底，漏数哪一张，删除就会把那批
+  // 记录的上课地点静默清空。班课课次曾经就是这么被漏掉的。
+  const [lessons, sessions, classes] = await Promise.all([
+    prisma.scheduledLesson.count({ where: { classroomId: id } }),
+    prisma.groupSession.count({ where: { classroomId: id } }),
+    prisma.groupClass.count({ where: { classroomId: id } }),
+  ]);
+  const refs = [
+    lessons && `${lessons} 条一对一排课`,
+    sessions && `${sessions} 次班课`,
+    classes && `${classes} 个班级把它设为默认教室`,
+  ].filter(Boolean);
+  if (refs.length) {
+    return NextResponse.json({ error: `该教室已被引用（${refs.join("、")}），无法删除` }, { status: 400 });
   }
 
   await prisma.classroom.delete({ where: { id } });

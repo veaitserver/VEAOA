@@ -236,12 +236,14 @@ function TeacherTimetable({
 
 // ── Mobile: day-view card list for one teacher ────────────────────────────────
 function TeacherDayCard({
-  teacher, day, lessons, onAdd, onLessonClick,
+  teacher, day, lessons, onAdd, onLessonClick, canAdd,
 }: {
   teacher: Teacher;
   day: Date;
   lessons: Lesson[];
   onAdd: (teacherId: string, day: Date) => void;
+  /** 老师只读自己的课表，不显示排课入口 */
+  canAdd: boolean;
   onLessonClick: (lesson: Lesson) => void;
 }) {
   const dayLessons = lessons
@@ -297,13 +299,15 @@ function TeacherDayCard({
       </div>
 
       {/* Add button */}
-      <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100">
-        <button onClick={() => onAdd(teacher.id, day)}
-          className="w-full flex items-center justify-center gap-2 py-2 text-sm text-blue-600 font-medium
-            rounded-lg border border-dashed border-blue-300 hover:bg-blue-50 active:bg-blue-100 transition-colors">
-          <span className="text-lg leading-none">＋</span> 添加排课
-        </button>
-      </div>
+      {canAdd && (
+        <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100">
+          <button onClick={() => onAdd(teacher.id, day)}
+            className="w-full flex items-center justify-center gap-2 py-2 text-sm text-blue-600 font-medium
+              rounded-lg border border-dashed border-blue-300 hover:bg-blue-50 active:bg-blue-100 transition-colors">
+            <span className="text-lg leading-none">＋</span> 添加排课
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -689,8 +693,9 @@ export default function SchedulePage() {
   const [detailError, setDetailError] = useState("");
 
   const roles: string[] = (session?.user as { roles?: string[] })?.roles ?? [];
-  // 与后端 canSchedule 一致：老师/教务/校长/超管可改课表。
-  const canEditLesson = roles.some((r) => ["TEACHER", "ACADEMIC_ADMIN", "PRINCIPAL", "SUPER_ADMIN"].includes(r));
+  // 与后端 canSchedule 一致：教务/校长/超管可改课表。
+  // 老师不在其中 —— 他只读自己的课表，排课/改期/删课都归教务。
+  const canEditLesson = roles.some((r) => ["ACADEMIC_ADMIN", "PRINCIPAL", "SUPER_ADMIN"].includes(r));
 
   function closeDetail() {
     setDetail(null); setEditing(false); setDetailError("");
@@ -781,6 +786,8 @@ export default function SchedulePage() {
   function goToday()  { setWeekStart(getMonday(torontoTodayNoon())); setSelectedDay(torontoTodayNoon()); }
 
   function openModal(teacherId: string, day: Date, hour = 16) {
+    // 老师点空白格不该弹出排课窗 —— 后端也会拒，但先别把入口露出来。
+    if (!canEditLesson) return;
     const sh = String(hour).padStart(2, "0");
     const eh = String(Math.min(hour + 2, DAY_END)).padStart(2, "0");
     setModalTeacherId(teacherId);
@@ -953,6 +960,7 @@ export default function SchedulePage() {
             day={selectedDay}
             lessons={lessons}
             onAdd={(tid, day) => openModal(tid, day)}
+            canAdd={canEditLesson}
             onLessonClick={setDetail}
           />
         ))}

@@ -28,6 +28,18 @@ export function rateLimit(key: string, { limit, windowMs }: RateLimitOptions): b
 }
 
 /**
+ * 只看是否已超限，不消耗配额。
+ *
+ * 登录用「先看、失败才记一笔」的方式：整间办公室共用一个出口 IP 时，
+ * 正常上班登录不该把额度耗光，只有猜错密码才计数。
+ */
+export function isRateLimited(key: string, { limit }: Pick<RateLimitOptions, "limit">): boolean {
+  const w = buckets.get(key);
+  if (!w || Date.now() >= w.resetAt) return false;
+  return w.count >= limit;
+}
+
+/**
  * 从请求头取客户端 IP。
  *
  * x-forwarded-for = "客户端, 代理1, 代理2..."，**首段是客户端可控的**，用它做限流 key

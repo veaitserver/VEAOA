@@ -223,8 +223,29 @@ export function canReverseDeduction(user: SessionUser | null | undefined): boole
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
+/**
+ * 排课 / 改期 / 删课 —— 教务的活。
+ *
+ * 老师**不在**这里：曾经在，结果老师 A 能往老师 B 的课表塞课、也能删掉 B 的课，
+ * 还能消耗任意学生的课包课时（validateTargets 只校验被排的老师是本校区在职老师，
+ * 从不比对操作者自己）。老师只写日志、看自己的课表。
+ */
 export function canSchedule(user: SessionUser | null | undefined): boolean {
-  return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
+  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
+}
+
+/** 谁能打开课表页：排课的人 + 老师（老师只读，且只看得到自己那一列）。 */
+export function canViewSchedule(user: SessionUser | null | undefined): boolean {
+  return canSchedule(user) || hasRole(user, Role.TEACHER);
+}
+
+/**
+ * 课表的自身收敛：纯老师只能看自己的课，返回按老师过滤的条件。
+ * 兼任教务/校长的老师照常看全校区，所以先判 canSchedule。
+ */
+export function ownScheduleScope(user: SessionUser): { teacherId: string } | undefined {
+  if (canSchedule(user)) return undefined;
+  return { teacherId: user.id };
 }
 
 // ── 页面/报表的可见性 ────────────────────────────────────────────────────────

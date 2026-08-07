@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { canReverseDeduction, denyCrossCampus, type SessionUser } from "@/lib/permissions";
 import { roundHours } from "@/lib/hours";
 import { isDeductionLocked } from "@/lib/lock";
+import { settledPackageIds } from "@/lib/settlement";
 import { GroupSessionStatus } from "@/lib/enums";
 import { z } from "zod";
 
@@ -52,6 +53,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const locked = targets.find((d) => isDeductionLocked(d));
   if (locked) {
     return NextResponse.json({ error: "该扣课已锁定（确认满一周），请财务先解锁再撤销" }, { status: 403 });
+  }
+
+  // 已结算的课包不能再把课时加回来（理由同一对一撤销，见 lessons/[id]/reverse）。
+  const settled = await settledPackageIds(prisma, [...new Set(targets.map((d) => d.packageId))]);
+  if (settled.size) {
+    return NextResponse.json(
+      { error: `有 ${settled.size} 名成员的课包已转化或已退费结算，撤销会让课时与金额对不上，请联系财务调整课包` },
+      { status: 400 },
+    );
   }
 
   try {
