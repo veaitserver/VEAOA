@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 模板不含任何真实值，要进版本库，否则没人知道该配哪些变量
+!.env.example
 
 # vercel
 .vercel

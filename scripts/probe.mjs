@@ -1744,8 +1744,43 @@ async function run() {
   await cleanupLiab();
 }
 
+/**
+ * 生产护栏。
+ *
+ * 本脚本会真实创建和删除学生、课包、用户 —— 打到生产就是数据事故。
+ * 目标环境不靠人记域名，由服务端 /api/health 自报。
+ *
+ * 对远程目标一律 fail closed：问不出环境就当成生产拒绝。本机 localhost 放行，
+ * 否则日常开发每次都要多起一个服务。
+ */
+async function assertSafeTarget() {
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(BASE);
+  if (isLocal) return;
+
+  let env = null;
+  try {
+    const res = await fetch(`${BASE}/api/health`);
+    if (res.ok) env = (await res.json())?.env ?? null;
+  } catch {
+    // 连不上，下面按「问不出」处理
+  }
+
+  if (env === "production") {
+    console.error(`\n拒绝执行：${BASE} 自报为生产环境。`);
+    console.error("探测脚本会真实增删数据，只能打到测试环境。");
+    process.exit(1);
+  }
+  if (env !== "staging" && env !== "development") {
+    console.error(`\n拒绝执行：无法从 ${BASE}/api/health 确认目标环境（读到 ${JSON.stringify(env)}）。`);
+    console.error("远程目标必须能自报环境，否则一律按生产对待。");
+    process.exit(1);
+  }
+  console.log(`目标环境：${env} @ ${BASE}`);
+}
+
 // ── 主流程 ──────────────────────────────────────────────────────────────────
 try {
+  await assertSafeTarget();
   await setup();
   await run();
 } catch (e) {

@@ -1,11 +1,21 @@
 import { PrismaClient } from "@prisma/client";
 import { Role, LeadSource } from "../lib/enums";
+import { appEnv } from "../lib/env";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("Seeding database...");
+  // 这份 seed 会建演示学生、演示课包，以及一批弱口令账号（admin123 等）。
+  // 灌进生产就是把后台大门敞开，所以在生产环境直接拒绝执行。
+  // 生产的初始化走 scripts/bootstrap.mjs：只建校区/年级/科目 + 一个管理员。
+  if (appEnv() === "production") {
+    console.error("拒绝执行：seed 含演示数据与弱口令账号，不能用于生产环境。");
+    console.error("生产初始化请用：npm run db:bootstrap");
+    process.exit(1);
+  }
+
+  console.log(`Seeding database... (APP_ENV=${appEnv()})`);
 
   // ── Campuses ────────────────────────────────────────────────────────────────
   const campusMarkham = await prisma.campus.upsert({
