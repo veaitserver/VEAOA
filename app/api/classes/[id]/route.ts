@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  canManageGroupClass, canViewGroupClass, denyCrossCampus, type SessionUser,
+  canManageGroupClass, canViewGroupClass, denyCrossCampus, ownClassScope, type SessionUser,
 } from "@/lib/permissions";
 import { GroupClassStatus } from "@/lib/enums";
 import { z } from "zod";
@@ -64,6 +64,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const denied = denyCrossCampus(sessionUser, cls.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+
+  // 老师只看自己带的班。列表已按 teacherId 收敛，这里是按 id 直取的那条路，
+  // 不挡住就等于列表白收敛了 —— 班级详情带着完整花名册。
+  const ownClass = ownClassScope(sessionUser);
+  if (ownClass && cls.teacherId !== ownClass.teacherId) {
+    return NextResponse.json({ error: "只能查看自己带的班级" }, { status: 403 });
+  }
 
   return NextResponse.json(cls);
 }

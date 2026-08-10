@@ -2029,6 +2029,118 @@ async function run() {
     `HTTP ${acadStudents.status}，共 ${acadList.length} 人`);
 
   await cleanupOwnerScope();
+
+  // ── 阶段 19：老师只看得到自己的东西 ────────────────────────────────────────
+  console.log("\n阶段 19 — 老师视野收敛");
+  const cleanupTeacherView = async () => {
+    const cs = await prisma.groupClass.findMany({ where: { name: "探测班·同事的班" } });
+    for (const c of cs) {
+      await prisma.groupSessionAttendance.deleteMany({ where: { session: { classId: c.id } } });
+      await prisma.groupSession.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClassMember.deleteMany({ where: { classId: c.id } });
+      await prisma.groupClass.delete({ where: { id: c.id } });
+    }
+    const peer = await prisma.user.findUnique({ where: { phone: "6470000096" } });
+    if (peer) {
+      const logs = await prisma.lessonLog.findMany({ where: { teacherId: peer.id } });
+      for (const lg of logs) await prisma.courseDeduction.deleteMany({ where: { logId: lg.id } });
+      await prisma.lessonLog.deleteMany({ where: { teacherId: peer.id } });
+      await prisma.scheduledLesson.deleteMany({ where: { teacherId: peer.id } });
+      await prisma.userRole.deleteMany({ where: { userId: peer.id } });
+      await prisma.userCampus.deleteMany({ where: { userId: peer.id } });
+      await prisma.user.delete({ where: { id: peer.id } });
+    }
+  };
+  await cleanupTeacherView();
+
+  // 同校区的另一位老师：带一个班，且有一节已核销的课
+  const tvPeer = await prisma.user.create({
+    data: {
+      name: "探测·同事老师", phone: "6470000096", passwordHash: await bcrypt.hash("teacher123", 12),
+      roles: { create: [{ role: "TEACHER" }] }, campuses: { create: [{ campusId: "campus-markham" }] },
+    },
+  });
+  const tvSubject = await prisma.subject.findFirst({ where: { name: "Math" } });
+  const tvClass = await prisma.groupClass.create({
+    data: {
+      name: "探测班·同事的班", campusId: "campus-markham", subjectId: tvSubject.id,
+      teacherId: tvPeer.id, createdById: fx.admin.id, status: "ONGOING",
+    },
+  });
+  const tvPkg = await prisma.coursePackage.findFirst({
+    where: { status: "ACTIVE", student: { campusId: "campus-markham" } },
+  });
+  const tvAt = new Date(fx.base.getTime() + 800 * 86400000);
+  const tvLes = await prisma.scheduledLesson.create({
+    data: {
+      teacherId: tvPeer.id, studentId: tvPkg.studentId, packageId: tvPkg.id,
+      classroomId: "room-mkm-102", startTime: tvAt, endTime: new Date(tvAt.getTime() + 2 * 3600000),
+    },
+  });
+  await prisma.lessonLog.create({
+    data: {
+      lessonId: tvLes.id, teacherId: tvPeer.id, subjectId: tvSubject.id,
+      notes: "探测·同事的课", confirmedAt: new Date(), confirmedById: fx.admin.id,
+    },
+  });
+
+  const tvTeacher = new Client("Markham 老师（视野）");
+  await tvTeacher.login("6470000002", "teacher123");
+
+  // 班级：列表看不到同事的班
+  const tvClasses = await tvTeacher.req("GET", "/api/classes");
+  const tvArr = Array.isArray(tvClasses.body) ? tvClasses.body : (tvClasses.body?.items ?? []);
+  check(19, "老师的班级列表不含同事带的班",
+    tvClasses.status === 200 && !tvArr.some((c) => c.id === tvClass.id),
+    `HTTP ${tvClasses.status}，共 ${tvArr.length} 个班`);
+
+  // 班级：按 id 直取也挡住（详情带完整花名册）
+  const tvDetail = await tvTeacher.req("GET", `/api/classes/${tvClass.id}`);
+  check(19, "老师按 id 直取同事的班详情被拒", blocked(tvDetail), `实际 ${tvDetail.status}`);
+
+  // 工时：只看自己的
+  const tvReport = await tvTeacher.req("GET", "/api/reports/teachers");
+  const tvNames = (tvReport.body?.teachers ?? []).map((t) => t.name);
+  check(19, "老师的工时报表只含自己",
+    tvReport.status === 200 && tvNames.length === 1 && tvNames[0] === "Michael Wang",
+    `HTTP ${tvReport.status}，含 ${tvNames.join("/") || "(空)"}`);
+
+  // 工时：改 teacherId 参数也翻不到同事
+  const tvPeek = await tvTeacher.req("GET", `/api/reports/teachers?teacherId=${tvPeer.id}`);
+  check(19, "老师改 teacherId 也查不到同事工时",
+    !(tvPeek.body?.teachers ?? []).some((t) => t.name === "探测·同事老师"),
+    `含 ${(tvPeek.body?.teachers ?? []).map((t) => t.name).join("/") || "(空)"}`);
+
+  // 学生档案对老师整体关闭（收敛归属后本就一个都匹配不到）
+  const tvStudents = await tvTeacher.req("GET", "/api/students");
+  const tvStuArr = Array.isArray(tvStudents.body) ? tvStudents.body : (tvStudents.body?.items ?? []);
+  check(19, "老师看不到任何学生档案", tvStuArr.length === 0, `共 ${tvStuArr.length} 人`);
+
+  // 反向：教务仍看得到全校区的班与工时，收敛不能过头
+  const tvAcadClasses = await acadMkm.req("GET", "/api/classes");
+  const tvAcadArr = Array.isArray(tvAcadClasses.body) ? tvAcadClasses.body : (tvAcadClasses.body?.items ?? []);
+  const tvAcadReport = await acadMkm.req("GET", "/api/reports/teachers");
+  check(19, "教务仍看得到全校区的班级与各老师工时",
+    tvAcadArr.some((c) => c.id === tvClass.id)
+      && (tvAcadReport.body?.teachers ?? []).some((t) => t.name === "探测·同事老师"),
+    `班级 ${tvAcadArr.length} 个，工时含 ${(tvAcadReport.body?.teachers ?? []).length} 位老师`);
+
+  // 仪表盘是各受限页面的摘要，最容易绕开收敛：老师那版不该出现学生名单/总数
+  const tvDash = await tvTeacher.req("GET", "/dashboard");
+  const tvHtml = typeof tvDash.body === "string" ? tvDash.body : "";
+  const tvLeaks = ["最近添加的学生", "添加学生", "学生总数", "有效课包"].filter((k) => tvHtml.includes(k));
+  check(19, "老师的仪表盘不含学生名单与课包统计",
+    tvDash.status === 200 && tvLeaks.length === 0,
+    `HTTP ${tvDash.status}，泄露 ${tvLeaks.join("/") || "无"}`);
+
+  // 反向：教务的仪表盘该有的还在
+  const tvAcadDash = await acadMkm.req("GET", "/dashboard");
+  const tvAcadHtml = typeof tvAcadDash.body === "string" ? tvAcadDash.body : "";
+  check(19, "教务的仪表盘仍含学生名单",
+    tvAcadDash.status === 200 && tvAcadHtml.includes("最近添加的学生"),
+    `HTTP ${tvAcadDash.status}`);
+
+  await cleanupTeacherView();
 }
 
 /**
@@ -2079,7 +2191,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

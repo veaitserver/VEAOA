@@ -9,6 +9,7 @@ import {
   canManageCampaigns,
   canManageUsers,
   canAccessPackages,
+  canViewStudents,
   canViewSalesReport,
   canViewLessons,
   canViewSchedule,
@@ -42,7 +43,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: "学生与课时管理",
     items: [
-      { href: "/students", label: "学生管理", icon: "👨‍🎓" },
+      { href: "/students", label: "学生管理", icon: "👨‍🎓", can: canViewStudents },
       { href: "/packages", label: "课包管理", icon: "📦", can: canAccessPackages },
       { href: "/schedule", label: "排课", icon: "📅", can: canViewSchedule },
       { href: "/classes", label: "班级管理", icon: "👨‍👩‍👧‍👦", can: canViewGroupClass },

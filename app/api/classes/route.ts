@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  campusScope, canManageGroupClass, canViewGroupClass, denyCrossCampus, type SessionUser,
+  campusScope, canManageGroupClass, canViewGroupClass, denyCrossCampus, ownClassScope, type SessionUser,
 } from "@/lib/permissions";
 import { GroupClassStatus } from "@/lib/enums";
 import { z } from "zod";
@@ -49,6 +49,9 @@ export async function GET(req: Request) {
   }
   const scope = campusScope(sessionUser);
   if (scope) where.campusId = scope;
+  // 老师只看自己带的班。压在 teacherId 参数之后，改 URL 也翻不到同事的班。
+  const ownClass = ownClassScope(sessionUser);
+  if (ownClass) where.teacherId = ownClass.teacherId;
 
   const include = {
     campus: { select: { name: true } },

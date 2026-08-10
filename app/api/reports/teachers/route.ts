@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canViewTeacherReport, type SessionUser } from "@/lib/permissions";
+import { campusScope, canViewTeacherReport, ownScheduleScope, type SessionUser } from "@/lib/permissions";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -24,6 +24,10 @@ export async function GET(req: Request) {
   const scope = campusScope(sessionUser);
   if (scope) where.student = { campusId: scope };
   if (teacherId) where.teacherId = teacherId;
+  // 老师只看自己的工时。工时直接连着课酬，让老师互相看得到同事的工作量
+  // 既没有业务理由，也是薪酬信息的旁路。压在 teacherId 参数之后。
+  const own = ownScheduleScope(sessionUser);
+  if (own) where.teacherId = own.teacherId;
   if (startDate || endDate) {
     const dateFilter: Record<string, Date> = {};
     if (startDate) dateFilter.gte = new Date(startDate);

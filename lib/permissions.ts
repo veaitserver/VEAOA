@@ -248,6 +248,27 @@ export function canViewGroupClass(user: SessionUser | null | undefined): boolean
   );
 }
 
+/**
+ * 「只看自己带的班」这一维。老师看班级是为了知道自己带哪几个班，
+ * 不该看到同事的班和其花名册。管理层/教务/学管/销售照常看全校区。
+ */
+export function ownClassScope(user: SessionUser): { teacherId: string } | undefined {
+  if (!hasRole(user, Role.TEACHER)) return undefined;
+  if (canManageGroupClass(user) || hasRole(user, Role.STUDENT_MANAGER, Role.SALES, Role.FINANCE)) return undefined;
+  return { teacherId: user.id };
+}
+
+/**
+ * 学生档案页。老师不在其中 —— 收敛归属后他一个学生也匹配不到，
+ * 菜单留着只会点进去看到空列表；HR 只管账号，同样不需要。
+ */
+export function canViewStudents(user: SessionUser | null | undefined): boolean {
+  return hasRole(
+    user, Role.SALES, Role.STUDENT_MANAGER, Role.ACADEMIC_ADMIN,
+    Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN,
+  );
+}
+
 export function canSubmitLog(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.TEACHER, Role.SUPER_ADMIN);
 }
