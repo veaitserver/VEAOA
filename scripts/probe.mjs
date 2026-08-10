@@ -1911,6 +1911,124 @@ async function run() {
 
   await prisma.coursePackage.deleteMany({ where: { id: rvConv.body?.package?.id } });
   await cleanupReview();
+
+  // ── 阶段 18：销售不管核销、学管只看自己负责的学生 ──────────────────────────
+  console.log("\n阶段 18 — 归属收敛");
+  const owPhones = ["6479998851", "6479998852"];
+  const cleanupOwnerScope = async () => {
+    for (const ph of owPhones) {
+      const st = await prisma.student.findFirst({ where: { phone: ph } });
+      if (!st) continue;
+      const logs = await prisma.lessonLog.findMany({ where: { lesson: { studentId: st.id } } });
+      for (const lg of logs) await prisma.courseDeduction.deleteMany({ where: { logId: lg.id } });
+      await prisma.lessonLog.deleteMany({ where: { lesson: { studentId: st.id } } });
+      await prisma.courseDeduction.deleteMany({ where: { package: { studentId: st.id } } });
+      await prisma.scheduledLesson.deleteMany({ where: { studentId: st.id } });
+      await prisma.followUp.deleteMany({ where: { studentId: st.id } });
+      await prisma.refundRequest.deleteMany({ where: { studentId: st.id } });
+      await prisma.ledgerEntry.deleteMany({ where: { studentId: st.id } });
+      await prisma.coursePackage.deleteMany({ where: { studentId: st.id } });
+      await prisma.student.delete({ where: { id: st.id } });
+    }
+  };
+  await cleanupOwnerScope();
+
+  // 甲归 Markham 学管，乙归 RH 学管 —— 两人同校区(Markham)，只差归属。
+  const owMine = await prisma.student.create({
+    data: {
+      name: "探测·我的学生", phone: owPhones[0], campusId: "campus-markham",
+      gradeId: fx.grade.id, studentManagerId: "user-sm-mkm",
+    },
+  });
+  const owOthers = await prisma.student.create({
+    data: {
+      name: "探测·别人的学生", phone: owPhones[1], campusId: "campus-markham",
+      gradeId: fx.grade.id, studentManagerId: "user-sm-rh",
+    },
+  });
+  const mkOwPkg = (studentId) => prisma.coursePackage.create({
+    data: {
+      studentId, gradeId: fx.grade.id, subjectId: fx.subject.id, classType: "ONE_ON_ONE",
+      totalHours: 10, pricePerHour: 100, totalAmount: 1000, remainingHours: 10,
+      status: "ACTIVE", createdById: fx.admin.id,
+    },
+  });
+  const owPkgMine = await mkOwPkg(owMine.id);
+  const owPkgOthers = await mkOwPkg(owOthers.id);
+  const owSlot = new Date(fx.base.getTime() + 700 * 86400000);
+  const mkOwLesson = (studentId, packageId, offset) => prisma.scheduledLesson.create({
+    data: {
+      teacherId: mkmTeacherRow.id, studentId, packageId,
+      classroomId: "room-mkm-101",
+      startTime: new Date(owSlot.getTime() + offset * 86400000),
+      endTime: new Date(owSlot.getTime() + offset * 86400000 + 2 * 3600000),
+    },
+  });
+  await mkOwLesson(owMine.id, owPkgMine.id, 0);
+  await mkOwLesson(owOthers.id, owPkgOthers.id, 1);
+
+  // ① 销售完全不碰核销
+  const salesLessons = await mkmSales.req("GET", "/api/lessons");
+  check(18, "销售不得查看核销记录", blocked(salesLessons), `实际 ${salesLessons.status}`);
+
+  // ② 学管能看核销，但只看得到自己负责的学生
+  const smLessons = await smMkm.req("GET", "/api/lessons");
+  const smSeesOthers = (smLessons.body ?? []).some((l) => l.student?.id === owOthers.id);
+  const smSeesMine = (smLessons.body ?? []).some((l) => l.student?.id === owMine.id);
+  check(18, "学管的核销列表只含自己负责的学生",
+    smLessons.status === 200 && smSeesMine && !smSeesOthers,
+    `HTTP ${smLessons.status}，自己的 ${smSeesMine}，别人的 ${smSeesOthers}`);
+
+  // ③ 财务不是老师，核销列表不该被筛成空
+  const finLessons = await finance.req("GET", "/api/lessons");
+  check(18, "财务能看到全校区核销（不被误当成老师筛空）",
+    finLessons.status === 200 && (finLessons.body ?? []).length > 0,
+    `HTTP ${finLessons.status}，${(finLessons.body ?? []).length} 条`);
+
+  // ④ 学生列表：学管只列自己负责的
+  const smStudents = await smMkm.req("GET", "/api/students");
+  const smList = Array.isArray(smStudents.body) ? smStudents.body : (smStudents.body?.items ?? []);
+  check(18, "学管的学生列表只含自己负责的",
+    smStudents.status === 200
+      && smList.some((x) => x.id === owMine.id)
+      && !smList.some((x) => x.id === owOthers.id),
+    `HTTP ${smStudents.status}，共 ${smList.length} 人`);
+
+  // ⑤ 学生档案：直接按 id 也翻不到别人的
+  const smPeekOwn = await smMkm.req("GET", `/api/students/${owMine.id}`);
+  const smPeekOther = await smMkm.req("GET", `/api/students/${owOthers.id}`);
+  check(18, "学管按 id 取自己的学生可以、取别人的被拒",
+    smPeekOwn.status === 200 && blocked(smPeekOther),
+    `自己的 ${smPeekOwn.status}，别人的 ${smPeekOther.status}`);
+
+  // ⑥ 账本同理 —— 这是钱，越权看得到最要命
+  const smLedgerOwn = await smMkm.req("GET", `/api/students/${owMine.id}/ledger`);
+  const smLedgerOther = await smMkm.req("GET", `/api/students/${owOthers.id}/ledger`);
+  check(18, "学管只能看自己负责学生的账本",
+    smLedgerOwn.status === 200 && blocked(smLedgerOther),
+    `自己的 ${smLedgerOwn.status}，别人的 ${smLedgerOther.status}`);
+
+  // ⑦ 跟进记录同理
+  const smFollowOther = await smMkm.req("GET", `/api/students/${owOthers.id}/followups`);
+  check(18, "学管不得查看别人学生的跟进记录", blocked(smFollowOther), `实际 ${smFollowOther.status}`);
+
+  // ⑧ 校长仍看全校区 —— 收敛不能把管理层一起收进去
+  const prinStudents = await mkmPrincipal.req("GET", "/api/students");
+  const prinList = Array.isArray(prinStudents.body) ? prinStudents.body : (prinStudents.body?.items ?? []);
+  check(18, "校长仍能看到本校区全部学生",
+    prinStudents.status === 200
+      && prinList.some((x) => x.id === owMine.id)
+      && prinList.some((x) => x.id === owOthers.id),
+    `HTTP ${prinStudents.status}，共 ${prinList.length} 人`);
+
+  // ⑨ 教务要排课，仍需看到全校区学生
+  const acadStudents = await acadMkm.req("GET", "/api/students");
+  const acadList = Array.isArray(acadStudents.body) ? acadStudents.body : (acadStudents.body?.items ?? []);
+  check(18, "教务仍能看到本校区全部学生（排课要用）",
+    acadStudents.status === 200 && acadList.some((x) => x.id === owOthers.id),
+    `HTTP ${acadStudents.status}，共 ${acadList.length} 人`);
+
+  await cleanupOwnerScope();
 }
 
 /**
@@ -1961,7 +2079,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canManageStudents, denyCrossCampus, ownerFilter, type SessionUser } from "@/lib/permissions";
+import { campusScope, canManageStudents, denyCrossCampus, studentOwnerScope, type SessionUser } from "@/lib/permissions";
 import { importLead } from "@/lib/leadImport";
 import { deriveStage } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
@@ -40,9 +40,8 @@ export async function GET(req: Request) {
   const where: Record<string, unknown> = {};
   const scope = campusScope(sessionUser, campusId);
   if (scope) where.campusId = scope;
-  // 归属隔离：销售只看自己名下的线索/学生；管理层看全校区。
-  const owner = ownerFilter(sessionUser);
-  if (owner) where.salesId = owner.salesId;
+  // 归属隔离：销售只看自己名下，学管只看自己负责的；校长/财务/教务看全校区。
+  Object.assign(where, studentOwnerScope(sessionUser) ?? {});
   if (search) where.OR = [
     { name: { contains: search } },
     { phone: { contains: search } },

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, denyNotOwner, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
+import { canManageStudents, denyCrossCampus, denyNotMyStudent, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
 import { isAssignableUser } from "@/lib/assign";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
@@ -63,8 +63,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const denied = denyCrossCampus(session.user as SessionUser, student.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
-  // 归属隔离：销售只能看自己名下的线索/学生。
-  const notOwner = denyNotOwner(session.user as SessionUser, student.salesId);
+  // 归属隔离：销售只能看自己名下的，学管只能看自己负责的。
+  const notOwner = denyNotMyStudent(session.user as SessionUser, student);
   if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
 
   // 压平成单个 deduction：只认「生效中」的那条。已撤销的课时已还回，
@@ -106,7 +106,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   const denied = denyCrossCampus(sessionUser, existing.campusId);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
-  const notOwner = denyNotOwner(sessionUser, existing.salesId);
+  const notOwner = denyNotMyStudent(sessionUser, existing);
   if (notOwner) return NextResponse.json({ error: notOwner }, { status: 403 });
 
   // 改归属销售只限校长/超管；销售不能把线索转给别人或抢过来。

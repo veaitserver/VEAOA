@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { Role } from "@/lib/enums";
+import {
+  campusScope, canViewLessons, ownScheduleScope, studentOwnerScope, type SessionUser,
+} from "@/lib/permissions";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -13,18 +15,24 @@ export async function GET(req: Request) {
   const start = searchParams.get("start"); // ISO，按上课时间过滤（核销管理默认当月）
   const end = searchParams.get("end");
 
-  const sessionUser = session.user as { id: string; roles: Role[]; campusIds: string[] };
-  const isSuperAdmin = sessionUser.roles.includes("SUPER_ADMIN" as Role);
-  const isTeacher = sessionUser.roles.includes("TEACHER" as Role);
-
-  const baseWhere: Record<string, unknown> = {};
-  if (!isSuperAdmin) {
-    if (isTeacher && !sessionUser.roles.some(r => ["ACADEMIC_ADMIN", "PRINCIPAL", "FINANCE"].includes(r as string))) {
-      baseWhere.teacherId = sessionUser.id;
-    } else {
-      baseWhere.student = { campusId: { in: sessionUser.campusIds } };
-    }
+  const sessionUser = session.user as SessionUser;
+  if (!canViewLessons(sessionUser)) {
+    return NextResponse.json({ error: "无权查看核销记录" }, { status: 403 });
   }
+
+  // 三层收敛，各管各的一维：
+  //   校区 —— campusScope（超管不限）
+  //   老师 —— 纯老师只看自己带的课
+  //   归属 —— 学管只看自己负责的学生（销售已在上面被整体挡掉）
+  const baseWhere: Record<string, unknown> = {};
+  const scope = campusScope(sessionUser);
+  const studentWhere: Record<string, unknown> = {};
+  if (scope) studentWhere.campusId = scope;
+  Object.assign(studentWhere, studentOwnerScope(sessionUser) ?? {});
+  if (Object.keys(studentWhere).length) baseWhere.student = studentWhere;
+
+  const own = ownScheduleScope(sessionUser);
+  if (own) baseWhere.teacherId = own.teacherId;
 
   const where: Record<string, unknown> = { ...baseWhere };
 

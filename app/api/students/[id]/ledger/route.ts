@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canViewLedger, denyCrossCampus, denyNotOwner, type SessionUser } from "@/lib/permissions";
+import { canViewLedger, denyCrossCampus, denyNotMyStudent, type SessionUser } from "@/lib/permissions";
 import { studentBalance } from "@/lib/ledger";
 
 /** 学生账户流水 + 余额。涉及金额，教务/老师无权查看。 */
@@ -17,11 +17,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const student = await prisma.student.findUnique({
     where: { id },
-    select: { campusId: true, salesId: true },
+    select: { campusId: true, salesId: true, studentManagerId: true },
   });
   if (!student) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const denied = denyCrossCampus(sessionUser, student.campusId) ?? denyNotOwner(sessionUser, student.salesId);
+  const denied = denyCrossCampus(sessionUser, student.campusId) ?? denyNotMyStudent(sessionUser, student);
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const [entries, balance] = await Promise.all([

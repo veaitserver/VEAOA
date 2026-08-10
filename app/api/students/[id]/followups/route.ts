@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, denyNotOwner, type SessionUser } from "@/lib/permissions";
+import { canManageStudents, denyCrossCampus, denyNotMyStudent, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({
@@ -11,14 +11,14 @@ const schema = z.object({
   nextFollowUp: z.string().optional(),
 });
 
-/** 跟进记录挂在学生下：校区 + 归属（销售只能碰自己的线索）。 */
+/** 跟进记录挂在学生下：校区 + 归属（销售只能碰自己名下的，学管只能碰自己负责的）。 */
 async function guardStudent(user: SessionUser, studentId: string) {
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { campusId: true, salesId: true },
+    select: { campusId: true, salesId: true, studentManagerId: true },
   });
   if (!student) return { error: "Not found", status: 404 as const };
-  const denied = denyCrossCampus(user, student.campusId) ?? denyNotOwner(user, student.salesId);
+  const denied = denyCrossCampus(user, student.campusId) ?? denyNotMyStudent(user, student);
   return denied ? { error: denied, status: 403 as const } : null;
 }
 

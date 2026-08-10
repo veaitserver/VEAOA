@@ -176,6 +176,43 @@ export function denyNotOwner(user: SessionUser, ownerId: string | null | undefin
   return ownerId === user.id ? null : "只能操作分配给自己的线索";
 }
 
+// ── 学生数据的归属收敛 ───────────────────────────────────────────────────────
+// 上面那对 ownerFilter/denyNotOwner 只认 salesId，而 seesCampusWide 把学管
+// 算进了「管理层」，于是学管在学生档案、账本、核销上完全不受归属限制，
+// 本校区谁的学生都看得到。下面这对按「销售看自己名下、学管看自己负责」收敛，
+// 是学生相关接口的唯一事实来源。
+
+/** 不受归属限制的角色：校长/财务/超管看全盘，教务要排课也得看到全校区学生。 */
+function seesAllStudents(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.ACADEMIC_ADMIN);
+}
+
+/**
+ * 列表侧的归属条件，可直接下推到 where.student（或学生表自身的 where）。
+ * undefined = 不加限制。身兼销售与学管的人取并集，不会因为角色判断的先后顺序丢数据。
+ */
+export function studentOwnerScope(
+  user: SessionUser,
+): { salesId: string } | { studentManagerId: string } | { OR: object[] } | undefined {
+  if (seesAllStudents(user)) return undefined;
+  const clauses: object[] = [];
+  if (hasRole(user, Role.SALES)) clauses.push({ salesId: user.id });
+  if (hasRole(user, Role.STUDENT_MANAGER)) clauses.push({ studentManagerId: user.id });
+  // 其余角色（老师/HR）与学生归属无关，一律查不到。
+  if (!clauses.length) return { salesId: "__none__" };
+  return clauses.length === 1
+    ? (clauses[0] as { salesId: string } | { studentManagerId: string })
+    : { OR: clauses };
+}
+
+/** 按 id 取到学生后的归属校验。返回 null 放行。 */
+export function denyNotMyStudent(
+  user: SessionUser,
+  student: { salesId: string | null; studentManagerId: string | null },
+): string | null {
+  return canSeePackageOfStudent(user, student) ? null : "只能查看分配给自己的学生";
+}
+
 // ── 账本与退费 ───────────────────────────────────────────────────────────────
 /** 查看学生账户流水（涉及金额）：与课包金额同一批人，教务/老师看不到。 */
 export function canViewLedger(user: SessionUser | null | undefined): boolean {
@@ -219,6 +256,19 @@ export function canConfirmLog(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.SUPER_ADMIN);
 }
 
+/**
+ * 核销管理（谁上了课、扣了多少课时）。
+ *
+ * 销售不在其中 —— 成交之后的履约不归销售管，让销售看到全校区谁在上课
+ * 也没有业务理由。老师看自己的课，学管看自己负责的学生（下推 studentOwnerScope）。
+ */
+export function canViewLessons(user: SessionUser | null | undefined): boolean {
+  return hasRole(
+    user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL,
+    Role.FINANCE, Role.SUPER_ADMIN, Role.STUDENT_MANAGER,
+  );
+}
+
 export function canReverseDeduction(user: SessionUser | null | undefined): boolean {
   return hasRole(user, Role.FINANCE, Role.SUPER_ADMIN);
 }
@@ -240,11 +290,15 @@ export function canViewSchedule(user: SessionUser | null | undefined): boolean {
 }
 
 /**
- * 课表的自身收敛：纯老师只能看自己的课，返回按老师过滤的条件。
- * 兼任教务/校长的老师照常看全校区，所以先判 canSchedule。
+ * 「只看自己带的课」这一维。课表和核销共用。
+ *
+ * 只对**纯老师**生效：兼任教务/校长的老师要看全校区，财务/学管压根不是老师，
+ * 给他们套上 teacherId 会把列表筛成空。这里只管老师这一维，
+ * 「能不能访问这个接口」由各接口自己的角色门负责。
  */
 export function ownScheduleScope(user: SessionUser): { teacherId: string } | undefined {
   if (canSchedule(user)) return undefined;
+  if (!hasRole(user, Role.TEACHER)) return undefined;
   return { teacherId: user.id };
 }
 
@@ -252,9 +306,11 @@ export function ownScheduleScope(user: SessionUser): { teacherId: string } | und
 // Sidebar 原先自带一张角色表来决定显示哪些导航项，但接口侧完全不校验，
 // 那张表纯属化妆品。现在两边共用下面这几个函数，避免第二份事实来源。
 
-export function canViewPackages(user: SessionUser | null | undefined): boolean {
-  return hasRole(user, Role.SALES, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
-}
+/**
+ * @deprecated 用 canAccessPackages —— 导航曾用这个、接口用 canAccessPackages，
+ * 两份名单不一致：学管负责续费却看不到「课包管理」入口。已并成一处。
+ */
+export const canViewPackages = canAccessPackages;
 
 // ── 课包接口的访问与可见性 ────────────────────────────────────────────────────
 /**
@@ -272,17 +328,10 @@ export function canViewPackageFinancials(user: SessionUser | null | undefined): 
 }
 
 /**
- * 课包列表的归属收敛（下推到 where.student）：
- * 管理层/教务看全校区；销售看自己名下；学管看自己负责的学生。
+ * 课包列表的归属收敛（下推到 where.student）。
+ * 与学生档案/账本/核销共用同一套判断，避免几处各写一份逐渐走样。
  */
-export function packageOwnerScope(
-  user: SessionUser,
-): { salesId: string } | { studentManagerId: string } | undefined {
-  if (hasRole(user, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN, Role.ACADEMIC_ADMIN)) return undefined;
-  if (hasRole(user, Role.SALES)) return { salesId: user.id };
-  if (hasRole(user, Role.STUDENT_MANAGER)) return { studentManagerId: user.id };
-  return { salesId: "__none__" }; // 兜底：其余角色查不到任何课包
-}
+export const packageOwnerScope = studentOwnerScope;
 
 /** 按 id 取到课包后，校验能否查看该学生的课包。管理层/教务放行(校区已单独校验)。 */
 export function canSeePackageOfStudent(
