@@ -64,10 +64,21 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const grantDenied = checkUserGrant(sessionUser, { roles, campusIds });
   if (grantDenied) return NextResponse.json({ error: grantDenied }, { status: 403 });
 
-  const updates: { name?: string; passwordHash?: string; isActive?: boolean } = {};
+  const updates: {
+    name?: string; passwordHash?: string; isActive?: boolean;
+    tokenVersion?: { increment: number }; failedLoginCount?: number; lockedUntil?: null;
+  } = {};
   if (name) updates.name = name;
-  if (password) updates.passwordHash = await bcrypt.hash(password, 12);
   if (isActive !== undefined) updates.isActive = isActive;
+  if (password) {
+    updates.passwordHash = await bcrypt.hash(password, 12);
+    // 改密码要踢掉该账号已签发的所有会话。JWT 是自包含的，光换哈希不影响
+    // 已经发出去的令牌 —— 账号被盗后改密码，攻击者手里那张照样能用到过期。
+    updates.tokenVersion = { increment: 1 };
+    // 管理员刚重置过密码，把失败计数与锁定一并清掉，免得本人立刻被挡在门外。
+    updates.failedLoginCount = 0;
+    updates.lockedUntil = null;
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id }, data: updates });

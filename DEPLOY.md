@@ -227,4 +227,17 @@ Railway → production 环境 → web 服务 → **Deployments** → 找到上�
 
 6. 全绿后提交，推 `main`，测试环境会自动带着新迁移部署
 
-**需要复核的点**：SQLite 把 `Float`/`DateTime` 存得比较松，Postgres 是强类型。金额字段现在是 `Float`——生产环境更稳妥的做法是改成 `Decimal(10,2)`，避免浮点误差在账本上累积。切库是顺手改掉它的最佳时机；但这会牵动 `lib/money.ts` 和账本相关代码，属于一次独立的改动。
+### 金额字段：切库时一并改成 Decimal
+
+金额现在是 `Float`。这一项**留到切 Postgres 时做，现在改没有意义**：SQLite 没有原生
+DECIMAL，Prisma 声明成 `Decimal` 也照样落成 REAL，存储层仍是浮点。Postgres 上
+`Decimal(10,2)` 才是真的定点。
+
+当前的浮点风险已被压住，不是靠运气：所有金额读写都过 `lib/money.ts` 的
+`roundMoney`/`lineAmount`，余额聚合后再 round 一次。实测现有 44 条账本流水、
+21 个学生，**单个学生累加的最大漂移是 0.000e+0**，离半分容差还有 15 个数量级的
+余量；24 张课包里「总价 ≠ 课时 × 单价」的有 0 条。
+
+所以这不是在赶工期，是顺序问题：切库那一步顺手改，一次迁移解决；现在改要动
+`lib/money.ts` 和全部账本代码，却换不来真正的定点存储。切库时记得同步复核
+`roundMoney` 是否还需要保留（Decimal 之后大部分场景不再需要）。

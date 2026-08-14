@@ -2141,6 +2141,105 @@ async function run() {
     `HTTP ${tvAcadDash.status}`);
 
   await cleanupTeacherView();
+
+  // ── 阶段 20：会话作废与账号锁定 ────────────────────────────────────────────
+  console.log("\n阶段 20 — 会话作废与账号锁定");
+  const sePhone = "6470000090";
+  const cleanupSession = async () => {
+    await prisma.userRole.deleteMany({ where: { user: { phone: sePhone } } });
+    await prisma.userCampus.deleteMany({ where: { user: { phone: sePhone } } });
+    await prisma.user.deleteMany({ where: { phone: sePhone } });
+  };
+  await cleanupSession();
+
+  const sePassword = "Probe-Passw0rd!";
+  const seUser = await prisma.user.create({
+    data: {
+      name: "探测·会话", phone: sePhone, passwordHash: await bcrypt.hash(sePassword, 12),
+      roles: { create: [{ role: "ACADEMIC_ADMIN" }] },
+      campuses: { create: [{ campusId: "campus-markham" }] },
+    },
+  });
+
+  // 未登录的接口请求要拿 401 JSON，不是 307 跳登录页 —— 否则前端会把
+  // 登录页 HTML 当 JSON 解析，白屏而不是跳登录。
+  const seAnon = await fetch(`${BASE}/api/students`, { redirect: "manual" });
+  const seAnonType = seAnon.headers.get("content-type") ?? "";
+  check(20, "未登录访问接口返回 401 JSON 而非跳转",
+    seAnon.status === 401 && seAnonType.includes("json"),
+    `HTTP ${seAnon.status} ${seAnonType.split(";")[0]}`);
+
+  // ① 停用后，已签发的会话当场失效
+  const seClient = new Client("探测·会话");
+  await seClient.login(sePhone, sePassword);
+  const seBefore = await seClient.req("GET", "/api/students");
+  await prisma.user.update({ where: { id: seUser.id }, data: { isActive: false } });
+  const seAfter = await seClient.req("GET", "/api/students");
+  check(20, "停用账号后其已登录会话立即失效",
+    seBefore.status === 200 && seAfter.status === 401,
+    `停用前 ${seBefore.status}，停用后 ${seAfter.status}（应 401）`);
+  await prisma.user.update({ where: { id: seUser.id }, data: { isActive: true } });
+
+  // ② 改角色不踢人，但权限当场变化
+  const seClient2 = new Client("探测·会话2");
+  await seClient2.login(sePhone, sePassword);
+  const seAsAcad = await seClient2.req("GET", "/api/students");
+  await prisma.userRole.deleteMany({ where: { userId: seUser.id } });
+  await prisma.userRole.create({ data: { userId: seUser.id, role: "TEACHER" } });
+  const seAsTeacher = await seClient2.req("GET", "/api/students");
+  const seStuArr = Array.isArray(seAsTeacher.body) ? seAsTeacher.body : (seAsTeacher.body?.items ?? []);
+  check(20, "改角色后无需重登，权限当场生效",
+    seAsAcad.status === 200 && seAsTeacher.status === 200 && seStuArr.length === 0,
+    `教务时 ${seAsAcad.status}，降为老师后 ${seAsTeacher.status} 且看到 ${seStuArr.length} 个学生（应 0）`);
+  await prisma.userRole.deleteMany({ where: { userId: seUser.id } });
+  await prisma.userRole.create({ data: { userId: seUser.id, role: "ACADEMIC_ADMIN" } });
+
+  // ③ 改密码作废所有旧会话（tokenVersion +1）
+  const seClient3 = new Client("探测·会话3");
+  await seClient3.login(sePhone, sePassword);
+  const seOk = await seClient3.req("GET", "/api/students");
+  await prisma.user.update({
+    where: { id: seUser.id },
+    data: { passwordHash: await bcrypt.hash("Another-Pass1!", 12), tokenVersion: { increment: 1 } },
+  });
+  const seDead = await seClient3.req("GET", "/api/students");
+  check(20, "改密码后旧会话立即作废",
+    seOk.status === 200 && seDead.status === 401,
+    `改前 ${seOk.status}，改后 ${seDead.status}（应 401）`);
+
+  // ④ 账号级锁定落库：连续猜错达上限后锁定，正确密码也进不去
+  await prisma.user.update({
+    where: { id: seUser.id },
+    data: { passwordHash: await bcrypt.hash(sePassword, 12), failedLoginCount: 0, lockedUntil: null },
+  });
+  const seGuess = new Client("探测·爆破");
+  for (let i = 0; i < 8; i++) await seGuess.login(sePhone, "wrong-guess").catch(() => {});
+  const seLocked = await prisma.user.findUnique({
+    where: { id: seUser.id }, select: { lockedUntil: true },
+  });
+  const seRightPw = new Client("探测·锁定后");
+  let seLoggedIn = true;
+  try { await seRightPw.login(sePhone, sePassword); } catch { seLoggedIn = false; }
+  const seProbe = seLoggedIn ? await seRightPw.req("GET", "/api/students") : { status: 401 };
+  check(20, "连续猜错达上限后账号被锁，正确密码也登不进",
+    !!seLocked?.lockedUntil && seLocked.lockedUntil > new Date() && seProbe.status === 401,
+    `锁到 ${seLocked?.lockedUntil?.toISOString() ?? "(未锁)"}，正确密码登录后取数据 ${seProbe.status}`);
+
+  // ⑤ 锁定到期自动解开，且登录成功后计数清零
+  await prisma.user.update({
+    where: { id: seUser.id }, data: { lockedUntil: new Date(Date.now() - 1000) },
+  });
+  const seAfterLock = new Client("探测·解锁后");
+  await seAfterLock.login(sePhone, sePassword);
+  const seBack = await seAfterLock.req("GET", "/api/students");
+  const seCleared = await prisma.user.findUnique({
+    where: { id: seUser.id }, select: { failedLoginCount: true, lockedUntil: true },
+  });
+  check(20, "锁定到期自动解开，登录成功后失败计数清零",
+    seBack.status === 200 && seCleared.failedLoginCount === 0 && seCleared.lockedUntil === null,
+    `HTTP ${seBack.status}，计数 ${seCleared?.failedLoginCount}，锁 ${seCleared?.lockedUntil ?? "(已清)"}`);
+
+  await cleanupSession();
 }
 
 /**
@@ -2191,7 +2290,7 @@ try {
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${"─".repeat(60)}`);
-for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
+for (const p of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
   const inPhase = results.filter((r) => r.phase === p);
   if (!inPhase.length) continue;
   const ok = inPhase.filter((r) => r.pass).length;

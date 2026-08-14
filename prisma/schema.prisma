@@ -15,6 +15,15 @@ model User {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 
+  // 会话作废计数。改密码时 +1，已签发的 JWT 里带的是旧值，下一次请求即失效。
+  // 停用/改角色不需要动它：那两样每次请求都会重新读库比对。
+  tokenVersion Int      @default(0)
+
+  // 登录失败锁定。放在库里而不是进程内 Map：重启不清零，多实例也共享。
+  // 按 IP 的限流仍是进程内的尽力而为，见 lib/rateLimit。
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
   roles    UserRole[]
   campuses UserCampus[]
 
