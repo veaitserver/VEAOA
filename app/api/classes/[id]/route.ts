@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  canManageGroupClass, canViewGroupClass, denyCrossCampus, ownClassScope, type SessionUser,
+  canManageGroupClass, canViewGroupClass, denyCrossCampus, hasRole, ownClassScope, type SessionUser,
 } from "@/lib/permissions";
-import { GroupClassStatus } from "@/lib/enums";
+import { GroupClassStatus, Role } from "@/lib/enums";
 import { z } from "zod";
 
 const updateSchema = z.object({
@@ -40,7 +40,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       creator: { select: { name: true } },
       members: {
         include: {
-          student: { select: { id: true, name: true } },
+          student: { select: { id: true, name: true, salesId: true, studentManagerId: true } },
           package: {
             select: {
               id: true, remainingHours: true, totalHours: true, status: true,
@@ -70,6 +70,40 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const ownClass = ownClassScope(sessionUser);
   if (ownClass && cls.teacherId !== ownClass.teacherId) {
     return NextResponse.json({ error: "只能查看自己带的班级" }, { status: 403 });
+  }
+
+  // 教师只需从课表进入班课写整班反馈，不应看到学生名单、考勤或课时。
+  if (ownClass) {
+    return NextResponse.json({
+      ...cls,
+      members: [],
+      sessions: cls.sessions.map(({ attendances: _attendances, ...row }) => ({ ...row, attendances: [] })),
+    });
+  }
+
+  // 学管/销售只可查看自己名下学生在班中的资料；不能借共同班级读取其他学生。
+  const canSeeAllClassData = hasRole(sessionUser, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+  const scopedToStudents = !canSeeAllClassData
+    && (hasRole(sessionUser, Role.STUDENT_MANAGER) || hasRole(sessionUser, Role.SALES));
+  if (scopedToStudents) {
+    const owns = (m: (typeof cls.members)[number]) =>
+      (hasRole(sessionUser, Role.STUDENT_MANAGER) && m.student.studentManagerId === sessionUser.id)
+      || (hasRole(sessionUser, Role.SALES) && m.student.salesId === sessionUser.id);
+    const ownMembers = cls.members.filter(owns);
+    if (!ownMembers.length) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const ownStudentIds = new Set(ownMembers.map((m) => m.studentId));
+    return NextResponse.json({
+      ...cls,
+      members: ownMembers.map(({ student, ...member }) => ({
+        ...member, student: { id: student.id, name: student.name },
+      })),
+      sessions: cls.sessions.map(({ attendances, ...row }) => ({
+        ...row,
+        attendances: attendances.filter((a) => ownStudentIds.has(a.studentId)),
+      })),
+    });
   }
 
   return NextResponse.json(cls);

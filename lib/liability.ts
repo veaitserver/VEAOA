@@ -81,23 +81,17 @@ async function pendingByPackage(db: Db, packageIds: string[]): Promise<Map<strin
   }
 
   // 班课：成员在册期间、尚未核销的课次，每次课按课次时长各占一份。
-  const members = await db.groupClassMember.findMany({
-    where: { packageId: { in: packageIds }, leftAt: null },
-    select: { packageId: true, classId: true },
+  // 与排课库存相同，未核销班课按 GroupSessionAttendance 的冻结名单计算。
+  // 不能按当前班级成员计算，否则退班后旧课的已承诺课时会从负债报表消失。
+  const groupAttendances = await db.groupSessionAttendance.findMany({
+    where: {
+      packageId: { in: packageIds },
+      session: { status: { not: GroupSessionStatus.CONFIRMED } },
+    },
+    select: { packageId: true, session: { select: { startTime: true, endTime: true } } },
   });
-  if (members.length) {
-    const sessions = await db.groupSession.findMany({
-      where: {
-        classId: { in: [...new Set(members.map((m) => m.classId))] },
-        status: { not: GroupSessionStatus.CONFIRMED },
-      },
-      select: { classId: true, startTime: true, endTime: true },
-    });
-    const byClass = new Map<string, number>();
-    for (const s of sessions) {
-      byClass.set(s.classId, (byClass.get(s.classId) ?? 0) + lessonHours(s.startTime, s.endTime));
-    }
-    for (const m of members) add(m.packageId, byClass.get(m.classId) ?? 0);
+  for (const a of groupAttendances) {
+    add(a.packageId, lessonHours(a.session.startTime, a.session.endTime));
   }
 
   for (const [id, h] of pending) pending.set(id, roundHours(h));

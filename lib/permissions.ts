@@ -370,7 +370,8 @@ export function canViewSalesReport(user: SessionUser | null | undefined): boolea
 }
 
 export function canViewTeacherReport(user: SessionUser | null | undefined): boolean {
-  return hasRole(user, Role.TEACHER, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+  // 教师的工作入口是自己的课表；工时报表属于教务/管理层的统计功能。
+  return hasRole(user, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
 }
 
 /**

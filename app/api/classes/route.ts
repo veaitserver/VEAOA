@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  campusScope, canManageGroupClass, canViewGroupClass, denyCrossCampus, ownClassScope, type SessionUser,
+  campusScope, canManageGroupClass, canViewGroupClass, denyCrossCampus, hasRole, ownClassScope, type SessionUser,
 } from "@/lib/permissions";
-import { GroupClassStatus } from "@/lib/enums";
+import { GroupClassStatus, Role } from "@/lib/enums";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -52,6 +52,15 @@ export async function GET(req: Request) {
   // 老师只看自己带的班。压在 teacherId 参数之后，改 URL 也翻不到同事的班。
   const ownClass = ownClassScope(sessionUser);
   if (ownClass) where.teacherId = ownClass.teacherId;
+  // 学管/销售仅能看到至少包含自己名下学生的班级，不能用班级列表浏览
+  // 其他同事的学生与开班情况。
+  const canSeeAllClassData = hasRole(sessionUser, Role.ACADEMIC_ADMIN, Role.PRINCIPAL, Role.FINANCE, Role.SUPER_ADMIN);
+  if (!ownClass && !canSeeAllClassData && (hasRole(sessionUser, Role.STUDENT_MANAGER) || hasRole(sessionUser, Role.SALES))) {
+    const studentOwner: Record<string, string>[] = [];
+    if (hasRole(sessionUser, Role.STUDENT_MANAGER)) studentOwner.push({ studentManagerId: sessionUser.id });
+    if (hasRole(sessionUser, Role.SALES)) studentOwner.push({ salesId: sessionUser.id });
+    where.members = { some: { student: studentOwner.length === 1 ? studentOwner[0] : { OR: studentOwner } } };
+  }
 
   const include = {
     campus: { select: { name: true } },

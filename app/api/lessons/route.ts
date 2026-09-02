@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  campusScope, canViewLessons, ownScheduleScope, studentOwnerScope, type SessionUser,
+  campusScope, canViewLessons, canViewPackageFinancials, ownScheduleScope, studentOwnerScope, type SessionUser,
 } from "@/lib/permissions";
 
 export async function GET(req: Request) {
@@ -71,12 +71,19 @@ export async function GET(req: Request) {
 
   // 前端只关心「当前生效」的那条扣课记录：优先未撤销的，否则取最近一条。压平成单个 deduction。
   type LessonRow = Prisma.ScheduledLessonGetPayload<{ include: typeof include }>;
+  const hidePackageMoney = !canViewPackageFinancials(sessionUser);
   const shape = (rows: LessonRow[]) =>
     rows.map((l) => {
-      if (!l.log) return l;
+      const packageData = hidePackageMoney
+        ? (() => {
+            const { pricePerHour: _price, totalAmount: _amount, topUpAmount: _topUp, ...safe } = l.package;
+            return safe;
+          })()
+        : l.package;
+      if (!l.log) return { ...l, package: packageData };
       const { deductions, ...log } = l.log;
       const current = deductions.find((d) => !d.reversedAt) ?? deductions[0] ?? null;
-      return { ...l, log: { ...log, deduction: current } };
+      return { ...l, package: packageData, log: { ...log, deduction: current } };
     });
 
   if (page >= 1) {

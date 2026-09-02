@@ -80,6 +80,16 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       // 库存要排除本节课自身，否则「原地微调时间」会把自己的时长重复计入。
       await assertInventory(tx, { pkg: lesson.package, durationHours, excludeLessonId: id });
 
+      // 改期后的课必须重新由老师反馈。若曾核销又撤销，扣课台账仍需保留，
+      // 但解除它与旧日志的关联后删除旧反馈，避免老师无法对新课再次提交反馈。
+      if (lesson.log) {
+        await tx.courseDeduction.updateMany({
+          where: { logId: lesson.log.id, reversedAt: { not: null } },
+          data: { logId: null },
+        });
+        await tx.lessonLog.delete({ where: { id: lesson.log.id } });
+      }
+
       const row = await tx.scheduledLesson.update({
         where: { id },
         data: {

@@ -51,7 +51,7 @@ export async function POST(req: Request) {
   // 默认负责人（若指定）须为该校区的活跃用户。
   if (defaultOwnerId) {
     const owner = await prisma.user.findFirst({
-      where: { id: defaultOwnerId, isActive: true, campuses: { some: { campusId } } },
+      where: { id: defaultOwnerId, isActive: true, roles: { some: { role: "SALES" } }, campuses: { some: { campusId } } },
       select: { id: true },
     });
     if (!owner) return NextResponse.json({ error: "默认负责人不属于该校区或已停用" }, { status: 400 });

@@ -35,7 +35,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   if (parsed.data.defaultOwnerId) {
     const owner = await prisma.user.findFirst({
-      where: { id: parsed.data.defaultOwnerId, isActive: true, campuses: { some: { campusId: owned.campaign!.campusId } } },
+      where: { id: parsed.data.defaultOwnerId, isActive: true, roles: { some: { role: "SALES" } }, campuses: { some: { campusId: owned.campaign!.campusId } } },
       select: { id: true },
     });
     if (!owner) return NextResponse.json({ error: "默认负责人不属于该校区或已停用" }, { status: 400 });

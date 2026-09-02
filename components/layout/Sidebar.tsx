@@ -46,7 +46,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/students", label: "学生管理", icon: "👨‍🎓", can: canViewStudents },
       { href: "/packages", label: "课包管理", icon: "📦", can: canAccessPackages },
       { href: "/schedule", label: "排课", icon: "📅", can: canViewSchedule },
-      { href: "/classes", label: "班级管理", icon: "👨‍👩‍👧‍👦", can: canViewGroupClass },
+      // 教师从自己的课表进入班课反馈，不展示独立的“班级管理”工作台。
+      { href: "/classes", label: "班级管理", icon: "👨‍👩‍👧‍👦", can: (u) => canViewGroupClass(u) && !u.roles.includes("TEACHER") },
       { href: "/lessons", label: "核销管理", icon: "✅", can: canViewLessons },
       { href: "/refunds", label: "退费管理", icon: "💸", can: canViewLedger },
     ],

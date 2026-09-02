@@ -71,6 +71,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const endTime = new Date(parsed.data.endTime);
   const durationHours = lessonHours(startTime, endTime);
 
+  // 创建班课时有这两道校验；改单次课也必须完全相同，不能借改期把
+  // 外校老师、非教师账号或外校教室写入课表。
+  const teacher = await prisma.user.findUnique({
+    where: { id: teacherId },
+    select: { isActive: true, roles: { select: { role: true } }, campuses: { select: { campusId: true } } },
+  });
+  if (!teacher || !teacher.isActive || !teacher.roles.some((r) => r.role === "TEACHER")
+      || !teacher.campuses.some((c) => c.campusId === s.class.campusId)) {
+    return NextResponse.json({ error: "教师不是本校在职教师" }, { status: 400 });
+  }
+  if (classroomId) {
+    const room = await prisma.classroom.findUnique({ where: { id: classroomId }, select: { campusId: true } });
+    if (!room || room.campusId !== s.class.campusId) {
+      return NextResponse.json({ error: "教室不属于本校" }, { status: 400 });
+    }
+  }
+
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const members = await activeMembers(tx, id);
@@ -79,7 +96,11 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
       const row = await tx.groupSession.update({
         where: { id: sessionId },
-        data: { startTime, endTime, teacherId, classroomId, deliveryMode },
+        // 改期即要求老师重新提交整班反馈，不能复用旧时间的反馈去核销新课。
+        data: {
+          startTime, endTime, teacherId, classroomId, deliveryMode,
+          notes: null, loggedById: null, loggedAt: null, status: GroupSessionStatus.SCHEDULED,
+        },
         include: {
           teacher: { select: { name: true } },
           classroom: { select: { name: true } },

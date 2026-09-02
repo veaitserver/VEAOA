@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, denyNotMyStudent, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
+import { canManageStudents, canViewPackageFinancials, denyCrossCampus, denyNotMyStudent, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
 import { isAssignableUser } from "@/lib/assign";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
@@ -69,12 +69,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // 压平成单个 deduction：只认「生效中」的那条。已撤销的课时已还回，
   // 该课应重新计入「已排未消耗」，故撤销后 deduction 视为空。
+  const hidePackageMoney = !canViewPackageFinancials(session.user as SessionUser);
+  const withoutMoney = <T extends { pricePerHour: unknown; totalAmount: unknown; topUpAmount?: unknown }>(pkg: T) => {
+    if (!hidePackageMoney) return pkg;
+    const { pricePerHour: _price, totalAmount: _amount, topUpAmount: _topUp, ...safe } = pkg;
+    return safe;
+  };
   const shaped = {
     ...student,
+    packages: student.packages.map(withoutMoney),
     lessons: student.lessons.map((l) => {
-      if (!l.log) return l;
+      const packageData = withoutMoney(l.package);
+      if (!l.log) return { ...l, package: packageData };
       const { deductions, ...log } = l.log;
-      return { ...l, log: { ...log, deduction: deductions.find((d) => !d.reversedAt) ?? null } };
+      return { ...l, package: packageData, log: { ...log, deduction: deductions.find((d) => !d.reversedAt) ?? null } };
     }),
   };
 
@@ -139,7 +147,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     where: { id },
     data: {
       ...rest,
-      salesId: salesId ?? undefined,
+      ...(salesId !== undefined ? { salesId } : {}),
       ...(studentManagerId !== undefined ? { studentManagerId: studentManagerId || null } : {}),
       ...(postalCode !== undefined ? { postalCode: postalCode?.trim() || null } : {}),
       ...(preferredContactApp !== undefined ? { preferredContactApp: preferredContactApp || null } : {}),

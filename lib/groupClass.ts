@@ -9,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { lessonHours, roundHours } from "./hours";
 import { ScheduleError } from "./scheduling";
+import { GroupSessionStatus } from "./enums";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -41,24 +42,22 @@ async function pendingHoursForPackage(
   packageId: string,
   excludeSessionId?: string,
 ): Promise<number> {
-  const memberships = await db.groupClassMember.findMany({
-    where: { packageId, leftAt: null },
-    select: { classId: true },
-  });
-  if (!memberships.length) return 0;
-
-  const sessions = await db.groupSession.findMany({
+  // 必须以排课时冻结的 attendance 快照为准，不能看当前是否仍在班。
+  // 学生退出班级后，已排但未核销的旧课仍会扣原课包；若这里忽略它，
+  // 该课包就能被再次排到超库存。
+  const attendances = await db.groupSessionAttendance.findMany({
     where: {
-      classId: { in: memberships.map((m) => m.classId) },
-      ...(excludeSessionId ? { id: { not: excludeSessionId } } : {}),
+      packageId,
+      session: {
+        status: { not: GroupSessionStatus.CONFIRMED },
+        ...(excludeSessionId ? { id: { not: excludeSessionId } } : {}),
+      },
     },
-    include: { deductions: { where: { packageId, reversedAt: null }, select: { id: true } } },
+    select: { session: { select: { startTime: true, endTime: true } } },
   });
 
   return roundHours(
-    sessions
-      .filter((s) => s.deductions.length === 0)
-      .reduce((sum, s) => sum + lessonHours(s.startTime, s.endTime), 0),
+    attendances.reduce((sum, a) => sum + lessonHours(a.session.startTime, a.session.endTime), 0),
   );
 }
 
@@ -149,10 +148,14 @@ export async function assertGroupNoConflict(
   // 成员：别的班级课次
   const otherSessions = await db.groupSession.findMany({
     where: { id: { not: args.excludeSessionId }, ...overlapLesson },
-    include: { class: { select: { name: true, members: { where: { leftAt: null }, select: { studentId: true } } } } },
+    include: {
+      class: { select: { name: true } },
+      // 同样用排课时名单：后来退班不能让同一学生与旧的未核销课撞课。
+      attendances: { select: { studentId: true } },
+    },
   });
   for (const s of otherSessions) {
-    const hit = s.class.members.find((m) => studentIds.includes(m.studentId));
+    const hit = s.attendances.find((a) => studentIds.includes(a.studentId));
     if (hit) {
       const name = args.members.find((m) => m.studentId === hit.studentId)?.student.name ?? "有成员";
       throw new ScheduleError(409, `${name} 该时段已在班级「${s.class.name}」有课，存在冲突`);
