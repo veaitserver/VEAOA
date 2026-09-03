@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, canViewPackageFinancials, denyCrossCampus, denyNotMyStudent, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
+import { canManageLeads, canManageStudents, canViewPackageFinancials, denyCrossCampus, denyNotMyStudent, canAssignLeadOwner, canAssignStudentManager, type SessionUser } from "@/lib/permissions";
 import { isAssignableUser } from "@/lib/assign";
 import { normalizeAppId } from "@/lib/leadImport";
 import { SourceCategory, LeadStatus } from "@/lib/enums";
@@ -108,6 +108,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     sourceCategory, sourceDetail, subjectsOfInterest, status,
     ...rest
   } = parsed.data;
+
+  // 线索来源、兴趣科目和漏斗状态只应由销售/校长处理；教务可维护
+  // 学籍资料，但不能绕过“校长分配 — 销售跟进”的业务链。
+  if ((sourceCategory !== undefined || sourceDetail !== undefined || subjectsOfInterest !== undefined || status !== undefined)
+      && !canManageLeads(sessionUser)) {
+    return NextResponse.json({ error: "无权修改线索信息或状态" }, { status: 403 });
+  }
 
   const existing = await prisma.student.findUnique({ where: { id }, select: { campusId: true, salesId: true, studentManagerId: true } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });

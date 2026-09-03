@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { campusScope, canManageStudents, denyCrossCampus, studentOwnerScope, type SessionUser } from "@/lib/permissions";
+import { campusScope, canManageLeads, denyCrossCampus, studentOwnerScope, type SessionUser } from "@/lib/permissions";
 import { importLead } from "@/lib/leadImport";
 import { deriveStage } from "@/lib/leadLabels";
 import { SourceCategory } from "@/lib/enums";
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const sessionUser = session.user as SessionUser;
-  if (!canManageStudents(sessionUser)) {
+  if (!canManageLeads(sessionUser)) {
     return NextResponse.json({ error: "无权建立学生档案" }, { status: 403 });
   }
 

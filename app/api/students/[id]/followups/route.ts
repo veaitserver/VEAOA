@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canManageStudents, denyCrossCampus, denyNotMyStudent, type SessionUser } from "@/lib/permissions";
+import { canManageLeads, denyCrossCampus, denyNotMyStudent, type SessionUser } from "@/lib/permissions";
 import { z } from "zod";
 
 const schema = z.object({
@@ -43,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const sessionUser = session.user as SessionUser;
-  if (!canManageStudents(sessionUser)) {
+  if (!canManageLeads(sessionUser)) {
     return NextResponse.json({ error: "无权写入跟进记录" }, { status: 403 });
   }
 
